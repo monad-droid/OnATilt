@@ -103,20 +103,23 @@ export default function Home() {
           {/* Chart Area */}
           <div className={`lg:col-span-8 xl:col-span-9 ${activeTab !== 'chart' ? 'hidden lg:block' : ''}`}>
             <div className="rounded-xl overflow-hidden bg-[#0a0a0f]">
-              <Chart analysis={analysis} height={600} />
+              <Chart height={600} />
             </div>
 
             {/* Analysis bar below chart */}
             <div className="mt-3 border border-gray-800 rounded-xl p-4">
               {/* Analyze controls */}
-              <div className="flex items-center gap-3 flex-wrap mb-4">
-                <span className="text-xs text-gray-500">Analyze on Hyperliquid:</span>
+              <div className="flex items-center gap-3 flex-wrap">
+                <span className="text-xs text-gray-500">Run setup analysis:</span>
                 <input
                   type="text"
                   value={analysisCoin}
-                  onChange={(e) => setAnalysisCoin(e.target.value.toUpperCase())}
+                  onChange={(e) => {
+                    setAnalysisCoin(e.target.value.toUpperCase());
+                    setAnalysis(null);
+                  }}
                   placeholder="BTC"
-                  className="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500 text-center"
+                  className="w-24 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm font-semibold focus:outline-none focus:border-blue-500 text-center uppercase"
                 />
                 <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
                   {TIMEFRAMES.map((tf) => (
@@ -135,22 +138,33 @@ export default function Home() {
                 </div>
                 <button
                   onClick={loadAnalysis}
-                  disabled={loading}
+                  disabled={loading || !analysisCoin.trim()}
                   className="px-5 py-1.5 bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-600 transition-colors"
                 >
                   {loading ? 'Analyzing...' : 'Analyze'}
                 </button>
+
+                {/* Show what was analyzed */}
+                {analysis && (
+                  <span className="text-xs text-gray-500 ml-2">
+                    Showing: <span className="text-white font-medium">{analysis.coin}</span> {analysis.timeframe}
+                  </span>
+                )}
               </div>
 
               {/* Error */}
               {error && (
-                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm mb-4">
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm mt-3">
                   {error}
                 </div>
               )}
 
               {/* Analysis results */}
-              <AnalysisPanel />
+              {analysis && (
+                <div className="mt-4 border-t border-gray-800 pt-4">
+                  <AnalysisPanel />
+                </div>
+              )}
             </div>
           </div>
 
