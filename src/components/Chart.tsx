@@ -154,19 +154,29 @@ export default function Chart({ candles, analysis, height = 500 }: ChartProps) {
       markersRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
     }
 
-    // Draw range lines
-    for (const range of analysis.ranges) {
-      if (range.broken) continue;
+    // Draw range lines — only ranges within 5% of current price
+    const currentPrice = analysis.currentPrice;
+    const relevantRanges = analysis.ranges.filter(r => {
+      if (r.broken) return false;
+      const distHigh = Math.abs(currentPrice - r.high) / currentPrice;
+      const distLow = Math.abs(currentPrice - r.low) / currentPrice;
+      return Math.min(distHigh, distLow) < 0.05;
+    });
 
+    for (const range of relevantRanges) {
       const startTime = (Math.min(range.highTime, range.lowTime) / 1000) as Time;
       const endTime = (candles[candles.length - 1].time / 1000) as Time;
 
+      // Use the same price scale as candles so lines overlay correctly,
+      // but attach to priceScaleId 'right' and use pricelines instead of
+      // separate series to avoid distorting auto-scale.
       const rangeHighLine = chart.addSeries(LineSeries, {
         color: '#ef444480',
         lineWidth: 1,
         lineStyle: 2,
         priceLineVisible: false,
         lastValueVisible: false,
+        autoscaleInfoProvider: () => null,
       });
 
       const rangeLowLine = chart.addSeries(LineSeries, {
@@ -175,6 +185,7 @@ export default function Chart({ candles, analysis, height = 500 }: ChartProps) {
         lineStyle: 2,
         priceLineVisible: false,
         lastValueVisible: false,
+        autoscaleInfoProvider: () => null,
       });
 
       const eqLine = chart.addSeries(LineSeries, {
@@ -183,6 +194,7 @@ export default function Chart({ candles, analysis, height = 500 }: ChartProps) {
         lineStyle: 1,
         priceLineVisible: false,
         lastValueVisible: false,
+        autoscaleInfoProvider: () => null,
       });
 
       rangeHighLine.setData([
