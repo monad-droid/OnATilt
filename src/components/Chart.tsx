@@ -209,7 +209,7 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
       // --- Range Lines (dealing ranges) via price lines ---
       // Price lines span the full visible width, acting as horizontal rays.
       if (toggles.range) {
-        const drawRanges = analysis.ranges.filter((r) => !r.broken);
+        const drawRanges = analysis.ranges;
 
         for (let ri = 0; ri < drawRanges.length; ri++) {
           const range = drawRanges[ri];

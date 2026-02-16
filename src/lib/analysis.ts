@@ -312,10 +312,16 @@ export function detectRanges(
   const sorted = [...swings].sort((a, b) => a.index - b.index);
 
   // --- Current Dealing Range ---
-  // Nearest unbroken swing high above price (the ceiling)
-  const ceilingSwings = sorted
+  // Prefer unbroken swing highs above price; fall back to broken ones
+  // (a broken swing high above price means price exceeded it then returned —
+  // it's still valid resistance for range purposes).
+  const unbrokenCeilings = sorted
     .filter(s => s.type === 'high' && !s.broken && s.price > currentPrice)
-    .sort((a, b) => a.price - b.price); // lowest first = nearest
+    .sort((a, b) => a.price - b.price);
+  const brokenCeilings = sorted
+    .filter(s => s.type === 'high' && s.broken && s.price > currentPrice)
+    .sort((a, b) => a.price - b.price);
+  const ceilingSwings = unbrokenCeilings.length > 0 ? unbrokenCeilings : brokenCeilings;
 
   let innerHigh: SwingPoint | undefined;
   let innerLow: SwingPoint | undefined;
@@ -331,27 +337,20 @@ export function detectRanges(
   }
 
   if (innerHigh && innerLow) {
-    // The ceiling is explicitly unbroken, so this range is active
-    const inner = buildRange(innerHigh, innerLow, currentPrice);
-    inner.broken = false;
-    inner.brokenDirection = undefined;
-    ranges.push(inner);
+    ranges.push(buildRange(innerHigh, innerLow, currentPrice));
 
     // --- Outer Dealing Range (one level out) ---
-    // Next unbroken swing high above the inner range high
+    // Next swing high above the inner range high
     const outerHighCandidates = ceilingSwings.filter(s => s.price > innerHigh!.price);
     for (const candidate of outerHighCandidates) {
       const legLow = findLegOrigin(candidate, sorted);
       if (legLow) {
-        const outer = buildRange(candidate, legLow, currentPrice);
-        outer.broken = false;
-        outer.brokenDirection = undefined;
-        ranges.push(outer);
+        ranges.push(buildRange(candidate, legLow, currentPrice));
         break;
       }
     }
   } else {
-    // Fallback: price is above all swing highs or no valid leg found.
+    // Last-resort fallback: no swing highs above price at all.
     // Use the most recent completed price leg (last two opposing swings).
     for (let i = sorted.length - 1; i >= 1; i--) {
       const a = sorted[i];
