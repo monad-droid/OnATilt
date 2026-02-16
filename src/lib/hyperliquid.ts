@@ -53,6 +53,11 @@ export async function fetchCandles(
   timeframe: Timeframe,
   limit: number = 500
 ): Promise<Candle[]> {
+  // Monthly candles: aggregate from daily data
+  if (timeframe === '1M') {
+    return fetchMonthlyCandles(coin, limit);
+  }
+
   const now = Date.now();
   const intervalMs = timeframeToMs(timeframe);
   const startTime = now - intervalMs * limit;
@@ -85,6 +90,36 @@ export async function fetchCandles(
     close: parseFloat(c.c),
     volume: parseFloat(c.v),
   }));
+}
+
+async function fetchMonthlyCandles(coin: string, limit: number): Promise<Candle[]> {
+  // Fetch enough daily candles to cover the requested months
+  const dailyCandles = await fetchCandles(coin, '1d', limit * 31);
+
+  // Group by year-month
+  const months = new Map<string, Candle[]>();
+  for (const c of dailyCandles) {
+    const d = new Date(c.time);
+    const key = `${d.getUTCFullYear()}-${d.getUTCMonth()}`;
+    if (!months.has(key)) months.set(key, []);
+    months.get(key)!.push(c);
+  }
+
+  // Aggregate each month
+  const result: Candle[] = [];
+  for (const [, days] of months) {
+    if (days.length === 0) continue;
+    result.push({
+      time: days[0].time,
+      open: days[0].open,
+      high: Math.max(...days.map(d => d.high)),
+      low: Math.min(...days.map(d => d.low)),
+      close: days[days.length - 1].close,
+      volume: days.reduce((sum, d) => sum + d.volume, 0),
+    });
+  }
+
+  return result.sort((a, b) => a.time - b.time).slice(-limit);
 }
 
 export async function fetchAssets(): Promise<{ name: string; szDecimals: number }[]> {
@@ -250,6 +285,7 @@ function timeframeToMs(tf: Timeframe): number {
     '1d': 86_400_000,
     '3d': 3 * 86_400_000,
     '1w': 7 * 86_400_000,
+    '1M': 30 * 86_400_000,
   };
   return map[tf];
 }
