@@ -242,7 +242,7 @@ export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPerce
 }
 
 // ============================================================
-// Range Detection — Bracket Approach
+// Range Detection — ICT Current Price Leg
 // ============================================================
 
 /**
@@ -273,12 +273,38 @@ function buildRange(
 }
 
 /**
- * Detect dealing ranges by bracketing the current price.
+ * Reduce a chronologically sorted swing array into alternating
+ * high/low "legs" by collapsing consecutive same-type swings into
+ * their most extreme value (highest high or lowest low).
+ */
+function collapseSwingLegs(sorted: SwingPoint[]): SwingPoint[] {
+  if (sorted.length === 0) return [];
+  const legs: SwingPoint[] = [];
+  let current = sorted[0];
+
+  for (let i = 1; i < sorted.length; i++) {
+    if (sorted[i].type === current.type) {
+      // Same type — keep the more extreme one
+      if (current.type === 'high' ? sorted[i].price > current.price : sorted[i].price < current.price) {
+        current = sorted[i];
+      }
+    } else {
+      legs.push(current);
+      current = sorted[i];
+    }
+  }
+  legs.push(current);
+  return legs;
+}
+
+/**
+ * ICT dealing range: identify the current price leg.
  *
- * Inner range: nearest swing high above price + nearest swing low below price.
- * Outer range: next swing high/low beyond the inner ones.
- *
- * This guarantees the range always contains the current price.
+ * 1. Sort swings chronologically and collapse consecutive same-type
+ *    swings into their extreme (highest high / lowest low).
+ * 2. The last two entries in the collapsed array form the current
+ *    price leg — that is the inner dealing range.
+ * 3. The previous leg (one step further back) is the outer range.
  */
 export function detectRanges(
   candles: Candle[],
@@ -287,45 +313,33 @@ export function detectRanges(
   if (swings.length < 2 || candles.length === 0) return [];
 
   const currentPrice = candles[candles.length - 1].close;
+  const sorted = [...swings].sort((a, b) => a.index - b.index);
+  const legs = collapseSwingLegs(sorted);
+
+  if (legs.length < 2) return [];
+
   const ranges: Range[] = [];
 
-  // All swing highs above price, sorted nearest-first
-  const highsAbove = swings
-    .filter(s => s.type === 'high' && s.price > currentPrice)
-    .sort((a, b) => a.price - b.price);
+  // Current price leg (inner dealing range)
+  const a = legs[legs.length - 2];
+  const b = legs[legs.length - 1];
+  const innerHigh = a.type === 'high' ? a : b;
+  const innerLow = a.type === 'low' ? a : b;
+  ranges.push(buildRange(innerHigh, innerLow, currentPrice));
 
-  // All swing lows below price, sorted nearest-first
-  const lowsBelow = swings
-    .filter(s => s.type === 'low' && s.price < currentPrice)
-    .sort((a, b) => b.price - a.price);
-
-  const innerHigh = highsAbove[0];
-  const innerLow = lowsBelow[0];
-
-  if (innerHigh && innerLow) {
-    ranges.push(buildRange(innerHigh, innerLow, currentPrice));
-
-    // Outer range: next level out
-    const outerHigh = highsAbove[1];
-    const outerLow = lowsBelow[1];
-    if (outerHigh && outerLow) {
+  // Previous price leg (outer dealing range)
+  if (legs.length >= 3) {
+    const c = legs[legs.length - 3];
+    // Outer range spans from c to b (the two legs combined)
+    const outerHigh = c.type === 'high'
+      ? (c.price > innerHigh.price ? c : innerHigh)
+      : innerHigh;
+    const outerLow = c.type === 'low'
+      ? (c.price < innerLow.price ? c : innerLow)
+      : innerLow;
+    // Only add if it's actually wider than the inner range
+    if (outerHigh.price !== innerHigh.price || outerLow.price !== innerLow.price) {
       ranges.push(buildRange(outerHigh, outerLow, currentPrice));
-    }
-  } else if (innerHigh) {
-    // Price is below all swing lows — use lowest swing low as floor
-    const lowestLow = swings
-      .filter(s => s.type === 'low')
-      .sort((a, b) => a.price - b.price)[0];
-    if (lowestLow) {
-      ranges.push(buildRange(innerHigh, lowestLow, currentPrice));
-    }
-  } else if (innerLow) {
-    // Price is above all swing highs — use highest swing high as ceiling
-    const highestHigh = swings
-      .filter(s => s.type === 'high')
-      .sort((a, b) => b.price - a.price)[0];
-    if (highestHigh) {
-      ranges.push(buildRange(highestHigh, innerLow, currentPrice));
     }
   }
 
