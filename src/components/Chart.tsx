@@ -143,6 +143,13 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
       markers.sort((a, b) => (a.time as number) - (b.time as number));
 
       // Deduplicate: if two markers have the same time + position, combine text
+      // Priority: SFP > BOS/CHoCH > structure > OB/FVG
+      const colorPriority = (color: string) => {
+        if (color === '#22c55e' || color === '#ef4444') return 3; // SFP
+        if (color === '#3b82f6') return 2; // BOS
+        if (color === '#eab308') return 2; // CHoCH
+        return 1; // structure gray, OB, FVG
+      };
       const deduped: SeriesMarker<Time>[] = [];
       for (const m of markers) {
         const prev = deduped[deduped.length - 1];
@@ -151,8 +158,12 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
           prev.time === m.time &&
           prev.position === m.position
         ) {
-          // Combine - keep the more important color (BOS/CHoCH > SFP > normal)
           prev.text = `${prev.text} | ${m.text}`;
+          // Keep the higher-priority color and shape
+          if (colorPriority(m.color) > colorPriority(prev.color)) {
+            prev.color = m.color;
+            prev.shape = m.shape;
+          }
         } else {
           deduped.push({ ...m });
         }
