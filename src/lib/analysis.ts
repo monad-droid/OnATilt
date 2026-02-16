@@ -242,6 +242,38 @@ export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPerce
 }
 
 // ============================================================
+// Lightweight SFP Scanner (for batch scanning many tokens)
+// ============================================================
+
+/**
+ * Fast scan: only computes swing points, SFPs, and trend.
+ * Skips ranges, order blocks, and FVGs for speed.
+ * Returns SFPs that occur on the last N candles (recency filter).
+ */
+export function scanForSFPs(
+  candles: Candle[],
+  swingStrength: number = 3,
+  recentCandles: number = 1, // how many recent candles to check for SFPs
+): { trend: Trend; sfps: SFP[]; currentPrice: number } {
+  if (candles.length < swingStrength * 2 + 3) {
+    return { trend: 'ranging', sfps: [], currentPrice: candles[candles.length - 1]?.close ?? 0 };
+  }
+
+  const ms = analyzeMarketStructure(candles, swingStrength);
+  const allSFPs = detectSFPs(candles, ms.swings);
+
+  // Filter to only SFPs where the sweep candle is in the last N candles
+  const minIndex = candles.length - recentCandles;
+  const recentSFPs = allSFPs.filter(sfp => sfp.sweepCandleIndex >= minIndex);
+
+  return {
+    trend: ms.trend,
+    sfps: recentSFPs,
+    currentPrice: candles[candles.length - 1]?.close ?? 0,
+  };
+}
+
+// ============================================================
 // Range Detection — ICT Current Price Leg
 // ============================================================
 

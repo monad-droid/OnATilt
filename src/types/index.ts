@@ -178,6 +178,23 @@ export interface SetupValidation {
   analysis: AnalysisResult;
 }
 
+// --- Scanner Types ---
+
+export interface ScannerResult {
+  coin: string;
+  currentPrice: number;
+  trend: Trend;
+  sfps: SFP[];              // SFPs found on the scanned candle(s)
+  scannedAt: number;         // timestamp
+}
+
+export interface ScannerProgress {
+  scanned: number;
+  total: number;
+  found: number;
+  scanning: string[];        // currently scanning these coins
+}
+
 // --- Trade Types ---
 
 export type OrderSide = 'buy' | 'sell';
