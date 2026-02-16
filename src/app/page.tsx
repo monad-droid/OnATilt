@@ -7,14 +7,16 @@ import ConnectWallet from '@/components/ConnectWallet';
 import SetupBuilder from '@/components/SetupBuilder';
 import TradePanel from '@/components/TradePanel';
 import AnalysisPanel from '@/components/AnalysisPanel';
-import type { Timeframe } from '@/types';
+import type { Candle, Timeframe } from '@/types';
 
-// Dynamic import for chart (SSR incompatible — TradingView widget uses DOM)
+// Dynamic imports (SSR incompatible — uses DOM / canvas)
 const Chart = dynamic(() => import('@/components/Chart'), { ssr: false });
+const TradingViewChart = dynamic(() => import('@/components/TradingViewChart'), { ssr: false });
 
 const TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1d'];
 
 type Tab = 'chart' | 'setups' | 'trade';
+type ChartView = 'analysis' | 'tradingview';
 
 export default function Home() {
   const {
@@ -29,8 +31,10 @@ export default function Home() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('chart');
+  const [chartView, setChartView] = useState<ChartView>('analysis');
   const [analysisCoin, setAnalysisCoin] = useState(selectedCoin);
   const [analysisTimeframe, setAnalysisTimeframe] = useState(selectedTimeframe);
+  const [candles, setCandles] = useState<Candle[]>([]);
 
   const loadAnalysis = useCallback(async () => {
     setLoading(true);
@@ -56,7 +60,10 @@ export default function Home() {
         return;
       }
 
+      setCandles(data.candles || []);
       setAnalysis(data.analysis);
+      // Switch to analysis view when data loads
+      setChartView('analysis');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
     } finally {
@@ -102,21 +109,16 @@ export default function Home() {
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           {/* Chart Area */}
           <div className={`lg:col-span-8 xl:col-span-9 ${activeTab !== 'chart' ? 'hidden lg:block' : ''}`}>
-            <div className="rounded-xl overflow-hidden bg-[#0a0a0f]">
-              <Chart height={600} />
-            </div>
-
-            {/* Analysis bar below chart */}
-            <div className="mt-3 border border-gray-800 rounded-xl p-4">
-              {/* Analyze controls */}
+            {/* Analysis Controls + Chart View Toggle */}
+            <div className="mb-3 border border-gray-800 rounded-xl p-3">
               <div className="flex items-center gap-3 flex-wrap">
-                <span className="text-xs text-gray-500">Run setup analysis:</span>
                 <input
                   type="text"
                   value={analysisCoin}
                   onChange={(e) => {
                     setAnalysisCoin(e.target.value.toUpperCase());
                     setAnalysis(null);
+                    setCandles([]);
                   }}
                   placeholder="BTC"
                   className="w-24 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm font-semibold focus:outline-none focus:border-blue-500 text-center uppercase"
@@ -148,35 +150,64 @@ export default function Home() {
                 {analysis && (
                   <span className="text-xs text-gray-500 ml-2">
                     Showing: <span className="text-white font-medium">{analysis.coin}</span> {analysis.timeframe}
+                    {' | '}
+                    <span className="text-gray-400">
+                      {analysis.marketStructure.trend.toUpperCase()} trend
+                    </span>
                   </span>
                 )}
+
+                {/* Chart view toggle - pushed to right */}
+                <div className="ml-auto flex gap-1 bg-gray-900 rounded-lg p-0.5">
+                  <button
+                    onClick={() => setChartView('analysis')}
+                    className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                      chartView === 'analysis'
+                        ? 'bg-blue-500 text-white'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                    }`}
+                  >
+                    Analysis
+                  </button>
+                  <button
+                    onClick={() => setChartView('tradingview')}
+                    className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                      chartView === 'tradingview'
+                        ? 'bg-blue-500 text-white'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                    }`}
+                  >
+                    TradingView
+                  </button>
+                </div>
               </div>
 
-              {/* Error */}
               {error && (
                 <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm mt-3">
                   {error}
                 </div>
               )}
+            </div>
 
-              {/* Analysis results */}
-              {analysis && (
-                <div className="mt-4 border-t border-gray-800 pt-4">
-                  <AnalysisPanel />
-                </div>
+            {/* Chart */}
+            <div className="rounded-xl overflow-hidden bg-[#0a0a0f]">
+              {chartView === 'analysis' ? (
+                <Chart candles={candles} analysis={analysis} height={600} />
+              ) : (
+                <TradingViewChart height={600} />
               )}
             </div>
+
+            {/* Analysis Summary below chart */}
+            {analysis && chartView === 'analysis' && (
+              <div className="mt-3 border border-gray-800 rounded-xl p-4">
+                <AnalysisPanel />
+              </div>
+            )}
           </div>
 
           {/* Right Sidebar */}
           <div className="lg:col-span-4 xl:col-span-3 space-y-4">
-            {/* Analysis (mobile only) */}
-            <div className={`lg:hidden ${activeTab !== 'chart' ? 'hidden' : ''}`}>
-              <div className="border border-gray-800 rounded-xl p-4">
-                <AnalysisPanel />
-              </div>
-            </div>
-
             {/* Setups */}
             <div className={`${activeTab !== 'setups' ? 'hidden lg:block' : ''}`}>
               <div className="border border-gray-800 rounded-xl p-4">
