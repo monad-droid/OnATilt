@@ -36,20 +36,22 @@ export default function Home() {
   const [analysisTimeframe, setAnalysisTimeframe] = useState(selectedTimeframe);
   const [candles, setCandles] = useState<Candle[]>([]);
 
-  const loadAnalysis = useCallback(async () => {
+  const loadAnalysis = useCallback(async (overrideCoin?: string, overrideTf?: Timeframe) => {
+    const coin = overrideCoin ?? analysisCoin;
+    const tf = overrideTf ?? analysisTimeframe;
     setLoading(true);
     setError(null);
 
     try {
-      setSelectedCoin(analysisCoin);
-      setSelectedTimeframe(analysisTimeframe);
+      setSelectedCoin(coin);
+      setSelectedTimeframe(tf);
 
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          coin: analysisCoin,
-          timeframe: analysisTimeframe,
+          coin,
+          timeframe: tf,
         }),
       });
 
@@ -127,7 +129,10 @@ export default function Home() {
                   {TIMEFRAMES.map((tf) => (
                     <button
                       key={tf}
-                      onClick={() => setAnalysisTimeframe(tf)}
+                      onClick={() => {
+                        setAnalysisTimeframe(tf);
+                        if (analysisCoin.trim()) loadAnalysis(undefined, tf);
+                      }}
                       className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
                         analysisTimeframe === tf
                           ? 'bg-blue-500 text-white'
@@ -139,7 +144,7 @@ export default function Home() {
                   ))}
                 </div>
                 <button
-                  onClick={loadAnalysis}
+                  onClick={() => loadAnalysis()}
                   disabled={loading || !analysisCoin.trim()}
                   className="px-5 py-1.5 bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-600 transition-colors"
                 >
