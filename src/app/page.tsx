@@ -8,9 +8,8 @@ import ConnectWallet from '@/components/ConnectWallet';
 import SetupBuilder from '@/components/SetupBuilder';
 import TradePanel from '@/components/TradePanel';
 import AnalysisPanel from '@/components/AnalysisPanel';
-import type { Candle } from '@/types';
 
-// Dynamic import for chart (SSR incompatible)
+// Dynamic import for chart (SSR incompatible — TradingView widget uses DOM)
 const Chart = dynamic(() => import('@/components/Chart'), { ssr: false });
 
 type Tab = 'chart' | 'setups' | 'trade';
@@ -23,7 +22,6 @@ export default function Home() {
     setAnalysis,
   } = useAppStore();
 
-  const [candles, setCandles] = useState<Candle[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('chart');
@@ -49,7 +47,6 @@ export default function Home() {
         return;
       }
 
-      setCandles(data.candles);
       setAnalysis(data.analysis);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load data');
@@ -121,16 +118,7 @@ export default function Home() {
           {/* Chart Area */}
           <div className={`lg:col-span-8 ${activeTab !== 'chart' ? 'hidden lg:block' : ''}`}>
             <div className="border border-gray-800 rounded-xl overflow-hidden bg-[#0a0a0f]">
-              {candles.length > 0 ? (
-                <Chart candles={candles} analysis={analysis} height={550} />
-              ) : (
-                <div className="flex items-center justify-center h-[550px] text-gray-600">
-                  <div className="text-center space-y-3">
-                    <div className="text-4xl">$</div>
-                    <p className="text-sm">Select a coin and timeframe, then click Analyze</p>
-                  </div>
-                </div>
-              )}
+              <Chart coin={selectedCoin} timeframe={selectedTimeframe} analysis={analysis} height={550} />
             </div>
 
             {/* Analysis Details (below chart on desktop) */}

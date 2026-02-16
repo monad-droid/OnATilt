@@ -1,226 +1,109 @@
 'use client';
 
-import { useEffect, useRef, useCallback } from 'react';
-import {
-  createChart,
-  createSeriesMarkers,
-  CandlestickSeries,
-  LineSeries,
-  type IChartApi,
-  type ISeriesApi,
-  type CandlestickData,
-  type Time,
-  type SeriesMarker,
-  type ISeriesMarkersPluginApi,
-} from 'lightweight-charts';
-import type { Candle, AnalysisResult } from '@/types';
+import { useEffect, useRef, memo } from 'react';
+import type { Timeframe, AnalysisResult } from '@/types';
 
 interface ChartProps {
-  candles: Candle[];
+  coin: string;
+  timeframe: Timeframe;
   analysis: AnalysisResult | null;
   height?: number;
 }
 
-export default function Chart({ candles, analysis, height = 500 }: ChartProps) {
-  const containerRef = useRef<HTMLDivElement>(null);
-  const chartRef = useRef<IChartApi | null>(null);
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const candleSeriesRef = useRef<ISeriesApi<any> | null>(null);
-  const markersRef = useRef<ISeriesMarkersPluginApi<Time> | null>(null);
+// Map our timeframes to TradingView intervals
+const TV_INTERVALS: Record<Timeframe, string> = {
+  '1m': '1',
+  '3m': '3',
+  '5m': '5',
+  '15m': '15',
+  '30m': '30',
+  '1h': '60',
+  '2h': '120',
+  '4h': '240',
+  '8h': '480',
+  '12h': '720',
+  '1d': 'D',
+  '3d': '3D',
+  '1w': 'W',
+};
 
-  const initChart = useCallback(() => {
+function Chart({ coin, timeframe, analysis, height = 550 }: ChartProps) {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const widgetRef = useRef<string | null>(null);
+
+  // Build the TradingView symbol — Hyperliquid perps are listed on TradingView
+  const tvSymbol = `HYPERLIQUID:${coin}USD.P`;
+  const tvInterval = TV_INTERVALS[timeframe] || '240';
+
+  useEffect(() => {
     if (!containerRef.current) return;
 
-    if (chartRef.current) {
-      chartRef.current.remove();
-    }
+    // Avoid re-creating if same symbol+interval
+    const widgetKey = `${tvSymbol}_${tvInterval}`;
+    if (widgetRef.current === widgetKey) return;
+    widgetRef.current = widgetKey;
 
-    const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
-      height,
-      layout: {
-        background: { color: '#0a0a0f' },
-        textColor: '#9ca3af',
+    // Clear previous widget
+    containerRef.current.innerHTML = '';
+
+    const script = document.createElement('script');
+    script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
+    script.type = 'text/javascript';
+    script.async = true;
+    script.innerHTML = JSON.stringify({
+      autosize: true,
+      symbol: tvSymbol,
+      interval: tvInterval,
+      timezone: 'Etc/UTC',
+      theme: 'dark',
+      style: '1', // Candlestick
+      locale: 'en',
+      backgroundColor: 'rgba(10, 10, 15, 1)',
+      gridColor: 'rgba(31, 41, 55, 0.5)',
+      allow_symbol_change: true,
+      calendar: false,
+      support_host: 'https://www.tradingview.com',
+      // Enable all drawing tools
+      hide_side_toolbar: false,
+      // Show drawing toolbar
+      drawings_access: {
+        type: 'all',
       },
-      grid: {
-        vertLines: { color: '#1f2937' },
-        horzLines: { color: '#1f2937' },
-      },
-      crosshair: {
-        mode: 0,
-      },
-      rightPriceScale: {
-        borderColor: '#374151',
-      },
-      timeScale: {
-        borderColor: '#374151',
-        timeVisible: true,
-      },
+      // Enable volume by default
+      studies: ['STD;Volume'],
+      // Toolbar settings
+      withdateranges: true,
+      hide_volume: false,
+      save_image: true,
+      show_popup_button: true,
+      popup_width: '1200',
+      popup_height: '800',
     });
 
-    const series = chart.addSeries(CandlestickSeries, {
-      upColor: '#22c55e',
-      downColor: '#ef4444',
-      borderUpColor: '#22c55e',
-      borderDownColor: '#ef4444',
-      wickUpColor: '#22c55e',
-      wickDownColor: '#ef4444',
-    });
+    const widgetContainer = document.createElement('div');
+    widgetContainer.className = 'tradingview-widget-container';
+    widgetContainer.style.height = `${height}px`;
+    widgetContainer.style.width = '100%';
 
-    chartRef.current = chart;
-    candleSeriesRef.current = series;
+    const widgetInner = document.createElement('div');
+    widgetInner.className = 'tradingview-widget-container__widget';
+    widgetInner.style.height = '100%';
+    widgetInner.style.width = '100%';
 
-    const handleResize = () => {
-      if (containerRef.current && chartRef.current) {
-        chartRef.current.applyOptions({ width: containerRef.current.clientWidth });
-      }
-    };
-    window.addEventListener('resize', handleResize);
-
-    return () => {
-      window.removeEventListener('resize', handleResize);
-    };
-  }, [height]);
-
-  useEffect(() => {
-    const cleanup = initChart();
-    return () => {
-      cleanup?.();
-      if (chartRef.current) {
-        chartRef.current.remove();
-        chartRef.current = null;
-      }
-    };
-  }, [initChart]);
-
-  // Update candle data
-  useEffect(() => {
-    if (!candleSeriesRef.current || candles.length === 0) return;
-
-    const data: CandlestickData<Time>[] = candles.map((c) => ({
-      time: (c.time / 1000) as Time,
-      open: c.open,
-      high: c.high,
-      low: c.low,
-      close: c.close,
-    }));
-
-    candleSeriesRef.current.setData(data);
-    chartRef.current?.timeScale().fitContent();
-  }, [candles]);
-
-  // Draw analysis overlays
-  useEffect(() => {
-    if (!chartRef.current || !candleSeriesRef.current || !analysis) return;
-
-    const chart = chartRef.current;
-
-    // Build markers
-    const markers: SeriesMarker<Time>[] = [];
-
-    for (const sp of analysis.marketStructure.structurePoints) {
-      const markerColor =
-        sp.breakType === 'BOS' ? '#3b82f6' :
-        sp.breakType === 'CHoCH' ? '#f59e0b' :
-        '#6b7280';
-
-      markers.push({
-        time: (sp.swing.time / 1000) as Time,
-        position: sp.swing.type === 'high' ? 'aboveBar' : 'belowBar',
-        color: markerColor,
-        shape: sp.swing.type === 'high' ? 'arrowDown' : 'arrowUp',
-        text: sp.breakType !== 'none' ? `${sp.label} ${sp.breakType}` : sp.label,
-      });
-    }
-
-    for (const sfp of analysis.sfps) {
-      markers.push({
-        time: (sfp.sweepCandle.time / 1000) as Time,
-        position: sfp.type === 'bullish' ? 'belowBar' : 'aboveBar',
-        color: sfp.type === 'bullish' ? '#22c55e' : '#ef4444',
-        shape: 'circle',
-        text: 'SFP',
-      });
-    }
-
-    markers.sort((a, b) => (a.time as number) - (b.time as number));
-
-    // Clean up old markers
-    if (markersRef.current) {
-      markersRef.current.detach();
-    }
-
-    if (markers.length > 0) {
-      markersRef.current = createSeriesMarkers(candleSeriesRef.current, markers);
-    }
-
-    // Draw range lines — only ranges within 5% of current price
-    const currentPrice = analysis.currentPrice;
-    const relevantRanges = analysis.ranges.filter(r => {
-      if (r.broken) return false;
-      const distHigh = Math.abs(currentPrice - r.high) / currentPrice;
-      const distLow = Math.abs(currentPrice - r.low) / currentPrice;
-      return Math.min(distHigh, distLow) < 0.05;
-    });
-
-    for (const range of relevantRanges) {
-      const startTime = (Math.min(range.highTime, range.lowTime) / 1000) as Time;
-      const endTime = (candles[candles.length - 1].time / 1000) as Time;
-
-      // Use the same price scale as candles so lines overlay correctly,
-      // but attach to priceScaleId 'right' and use pricelines instead of
-      // separate series to avoid distorting auto-scale.
-      const rangeHighLine = chart.addSeries(LineSeries, {
-        color: '#ef444480',
-        lineWidth: 1,
-        lineStyle: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        autoscaleInfoProvider: () => null,
-      });
-
-      const rangeLowLine = chart.addSeries(LineSeries, {
-        color: '#22c55e80',
-        lineWidth: 1,
-        lineStyle: 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        autoscaleInfoProvider: () => null,
-      });
-
-      const eqLine = chart.addSeries(LineSeries, {
-        color: '#6b728080',
-        lineWidth: 1,
-        lineStyle: 1,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        autoscaleInfoProvider: () => null,
-      });
-
-      rangeHighLine.setData([
-        { time: startTime, value: range.high },
-        { time: endTime, value: range.high },
-      ]);
-
-      rangeLowLine.setData([
-        { time: startTime, value: range.low },
-        { time: endTime, value: range.low },
-      ]);
-
-      eqLine.setData([
-        { time: startTime, value: range.equilibrium },
-        { time: endTime, value: range.equilibrium },
-      ]);
-    }
-  }, [analysis, candles]);
+    widgetContainer.appendChild(widgetInner);
+    widgetContainer.appendChild(script);
+    containerRef.current.appendChild(widgetContainer);
+  }, [tvSymbol, tvInterval, height]);
 
   return (
     <div className="relative">
-      <div ref={containerRef} className="w-full rounded-lg overflow-hidden" />
+      <div ref={containerRef} style={{ height: `${height}px` }} className="w-full rounded-lg overflow-hidden" />
 
+      {/* Analysis overlay */}
       {analysis && (
-        <div className="absolute top-2 left-2 bg-black/80 rounded-lg p-3 text-xs space-y-1">
-          <div className="flex items-center gap-2">
+        <div className="absolute top-2 right-2 bg-black/90 border border-gray-700 rounded-lg p-3 text-xs space-y-1 z-10 max-w-[200px]">
+          <div className="text-gray-500 font-medium mb-1">OnATilt Analysis</div>
+          <div className="flex items-center justify-between gap-3">
             <span className="text-gray-400">Trend:</span>
             <span className={
               analysis.marketStructure.trend === 'bullish' ? 'text-green-400' :
@@ -232,7 +115,7 @@ export default function Chart({ candles, analysis, height = 500 }: ChartProps) {
           </div>
 
           {analysis.priceRelativeToRange && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center justify-between gap-3">
               <span className="text-gray-400">Zone:</span>
               <span className={
                 analysis.priceRelativeToRange.zone === 'discount' ? 'text-green-400' :
@@ -244,22 +127,43 @@ export default function Chart({ candles, analysis, height = 500 }: ChartProps) {
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          {analysis.marketStructure.lastBOS && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-gray-400">Last BOS:</span>
+              <span className="text-blue-400">{analysis.marketStructure.lastBOS.label}</span>
+            </div>
+          )}
+
+          {analysis.marketStructure.lastCHoCH && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-gray-400">Last CHoCH:</span>
+              <span className="text-yellow-400">{analysis.marketStructure.lastCHoCH.label}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-3">
             <span className="text-gray-400">SFPs:</span>
             <span className="text-white">{analysis.sfps.length}</span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-3">
             <span className="text-gray-400">Ranges:</span>
-            <span className="text-white">{analysis.ranges.filter(r => !r.broken).length} active</span>
+            <span className="text-white">{analysis.ranges.filter(r => !r.broken).length}</span>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center justify-between gap-3">
             <span className="text-gray-400">OBs:</span>
-            <span className="text-white">{analysis.orderBlocks.filter(ob => !ob.mitigated).length} unmitigated</span>
+            <span className="text-white">{analysis.orderBlocks.filter(ob => !ob.mitigated).length}</span>
+          </div>
+
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-gray-400">FVGs:</span>
+            <span className="text-white">{analysis.fvgs.filter(f => !f.filled).length}</span>
           </div>
         </div>
       )}
     </div>
   );
 }
+
+export default memo(Chart);
