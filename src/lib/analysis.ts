@@ -331,7 +331,11 @@ export function detectRanges(
   }
 
   if (innerHigh && innerLow) {
-    ranges.push(buildRange(innerHigh, innerLow, currentPrice));
+    // The ceiling is explicitly unbroken, so this range is active
+    const inner = buildRange(innerHigh, innerLow, currentPrice);
+    inner.broken = false;
+    inner.brokenDirection = undefined;
+    ranges.push(inner);
 
     // --- Outer Dealing Range (one level out) ---
     // Next unbroken swing high above the inner range high
@@ -339,7 +343,10 @@ export function detectRanges(
     for (const candidate of outerHighCandidates) {
       const legLow = findLegOrigin(candidate, sorted);
       if (legLow) {
-        ranges.push(buildRange(candidate, legLow, currentPrice));
+        const outer = buildRange(candidate, legLow, currentPrice);
+        outer.broken = false;
+        outer.brokenDirection = undefined;
+        ranges.push(outer);
         break;
       }
     }
