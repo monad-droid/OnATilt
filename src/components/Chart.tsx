@@ -219,6 +219,55 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
       }
     }
 
+    // --- OHLC Legend (top-left overlay) ---
+    const legend = document.createElement('div');
+    legend.style.position = 'absolute';
+    legend.style.top = '8px';
+    legend.style.left = '8px';
+    legend.style.zIndex = '10';
+    legend.style.fontFamily = 'monospace';
+    legend.style.fontSize = '12px';
+    legend.style.lineHeight = '1.4';
+    legend.style.pointerEvents = 'none';
+    legend.style.color = '#9ca3af';
+    containerRef.current.appendChild(legend);
+
+    const formatPrice = (p: number) => {
+      if (p >= 1000) return p.toFixed(2);
+      if (p >= 1) return p.toFixed(4);
+      return p.toFixed(6);
+    };
+
+    const updateLegend = (o: number, h: number, l: number, c: number) => {
+      const pct = ((c - o) / o * 100);
+      const up = c >= o;
+      const pctColor = up ? '#26a69a' : '#ef5350';
+      const pctSign = pct >= 0 ? '+' : '';
+      legend.innerHTML =
+        `<span style="color:#6b7280">O</span> <span style="color:${up ? '#26a69a' : '#ef5350'}">${formatPrice(o)}</span>` +
+        `  <span style="color:#6b7280">H</span> <span style="color:#26a69a">${formatPrice(h)}</span>` +
+        `  <span style="color:#6b7280">L</span> <span style="color:#ef5350">${formatPrice(l)}</span>` +
+        `  <span style="color:#6b7280">C</span> <span style="color:${up ? '#26a69a' : '#ef5350'}">${formatPrice(c)}</span>` +
+        `  <span style="color:${pctColor}">${pctSign}${pct.toFixed(2)}%</span>`;
+    };
+
+    // Show last candle by default
+    const lastCandle = candles[candles.length - 1];
+    updateLegend(lastCandle.open, lastCandle.high, lastCandle.low, lastCandle.close);
+
+    // Update on crosshair move
+    chart.subscribeCrosshairMove((param) => {
+      if (!param || !param.seriesData || param.seriesData.size === 0) {
+        // Reset to last candle when cursor leaves
+        updateLegend(lastCandle.open, lastCandle.high, lastCandle.low, lastCandle.close);
+        return;
+      }
+      const data = param.seriesData.get(candleSeries) as { open: number; high: number; low: number; close: number } | undefined;
+      if (data && data.open !== undefined) {
+        updateLegend(data.open, data.high, data.low, data.close);
+      }
+    });
+
     // Fit content
     chart.timeScale().fitContent();
 
@@ -258,7 +307,7 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
   return (
     <div
       ref={containerRef}
-      style={{ height: `${height}px` }}
+      style={{ height: `${height}px`, position: 'relative' }}
       className="w-full rounded-lg overflow-hidden"
     />
   );
