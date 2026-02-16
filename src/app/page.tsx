@@ -13,7 +13,7 @@ import type { Candle, Timeframe } from '@/types';
 const Chart = dynamic(() => import('@/components/Chart'), { ssr: false });
 const TradingViewChart = dynamic(() => import('@/components/TradingViewChart'), { ssr: false });
 
-const TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1d', '1w', '1M'];
+const TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '12h', '1d', '1w', '1M'];
 
 type Tab = 'chart' | 'setups' | 'trade';
 type ChartView = 'analysis' | 'tradingview';
