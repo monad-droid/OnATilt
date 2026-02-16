@@ -185,6 +185,7 @@ export interface ScannerResult {
   currentPrice: number;
   trend: Trend;
   sfps: SFP[];              // SFPs found on the scanned candle(s)
+  totalCandles: number;      // total candles fetched (for "when" calculation)
   scannedAt: number;         // timestamp
 }
 

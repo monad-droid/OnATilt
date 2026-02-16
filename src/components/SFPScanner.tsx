@@ -64,13 +64,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           const res = await fetch('/api/scanner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              coins: batch,
-              timeframe,
-              // Weekly SFPs stay relevant longer — check last 3 candles
-              // Shorter TFs: check last 2 (current + last completed)
-              recentCandles: timeframe === '1w' ? 3 : 2,
-            }),
+            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 2 }),
           });
 
           const data = await res.json();
@@ -247,6 +241,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               <tr className="text-gray-500 text-xs border-b border-gray-800">
                 <th className="text-left py-2 px-2 font-medium">Token</th>
                 <th className="text-left py-2 px-2 font-medium">Type</th>
+                <th className="text-left py-2 px-2 font-medium">When</th>
                 <th className="text-right py-2 px-2 font-medium">Price</th>
                 <th className="text-right py-2 px-2 font-medium">Swept</th>
                 <th className="text-right py-2 px-2 font-medium">Wick%</th>
@@ -258,6 +253,8 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
                 r.sfps.map((sfp, j) => {
                   const wickPct = ((sfp.wickDepth / sfp.sweptSwing.price) * 100).toFixed(2);
                   const isBullish = sfp.type === 'bullish';
+                  const candlesFromEnd = r.totalCandles - 1 - sfp.sweepCandleIndex;
+                  const whenLabel = candlesFromEnd === 0 ? 'This' : 'Last';
 
                   return (
                     <tr
@@ -275,6 +272,11 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
                           }`}
                         >
                           {isBullish ? '\u25B2' : '\u25BC'} {sfp.type}
+                        </span>
+                      </td>
+                      <td className="py-2.5 px-2">
+                        <span className={`text-xs ${candlesFromEnd === 0 ? 'text-yellow-400' : 'text-gray-500'}`}>
+                          {whenLabel}
                         </span>
                       </td>
                       <td className="py-2.5 px-2 text-right text-white font-mono text-xs">

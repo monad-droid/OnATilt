@@ -47,6 +47,7 @@ export async function POST(request: NextRequest) {
           currentPrice,
           trend,
           sfps,
+          totalCandles: candles.length,
           scannedAt: Date.now(),
         };
       } catch {

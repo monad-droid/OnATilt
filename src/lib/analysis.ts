@@ -194,12 +194,6 @@ export function analyzeMarketStructure(candles: Candle[], swingStrength: number 
 export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPercent: number = 0.0005): SFP[] {
   const sfps: SFP[] = [];
 
-  // Tolerance for "swing broken" check — a close within 0.15% of the
-  // swing level is noise, not a convincing break.  Without this, a
-  // single candle closing $0.01 above a $69 swing kills the entire
-  // scan across 20+ subsequent candles.
-  const breakTolerance = 0.0015;
-
   for (const swing of swings) {
     // Only look at candles after the swing formed
     for (let i = swing.index + 1; i < candles.length; i++) {
@@ -220,8 +214,8 @@ export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPerce
             break; // only count the first SFP per swing
           }
         }
-        // Swing is broken only if close is convincingly above (beyond tolerance)
-        if (c.close > swing.price * (1 + breakTolerance)) break;
+        // If price closed above, swing is broken — no SFP possible
+        if (c.close > swing.price) break;
       }
 
       if (swing.type === 'low') {
@@ -239,8 +233,8 @@ export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPerce
             break;
           }
         }
-        // Swing is broken only if close is convincingly below (beyond tolerance)
-        if (c.close < swing.price * (1 - breakTolerance)) break;
+        // If price closed below, swing is broken — no SFP possible
+        if (c.close < swing.price) break;
       }
     }
   }
