@@ -32,7 +32,7 @@ function TradingViewChart({ height = 600 }: TradingViewChartProps) {
       calendar: false,
       support_host: 'https://www.tradingview.com',
       hide_side_toolbar: false,
-      studies: ['STD;Volume'],
+      studies: [],
       withdateranges: true,
       hide_volume: false,
       save_image: true,
