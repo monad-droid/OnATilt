@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   createChart,
   CandlestickSeries,
@@ -16,16 +16,37 @@ interface ChartProps {
   height?: number;
 }
 
+interface IndicatorToggles {
+  structure: boolean;
+  sfp: boolean;
+  ob: boolean;
+  fvg: boolean;
+  range: boolean;
+}
+
 function toTime(ms: number): UTCTimestamp {
   return (ms / 1000) as UTCTimestamp;
 }
 
 export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
+  const [toggles, setToggles] = useState<IndicatorToggles>({
+    structure: true,
+    sfp: true,
+    ob: true,
+    fvg: true,
+    range: true,
+  });
+
+  const toggle = (key: keyof IndicatorToggles) => {
+    setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
+  };
+
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!chartContainerRef.current) return;
 
     // Dispose previous chart
     if (chartRef.current) {
@@ -35,9 +56,9 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
 
     if (candles.length === 0) return;
 
-    const chart = createChart(containerRef.current, {
-      width: containerRef.current.clientWidth,
-      height,
+    const chart = createChart(chartContainerRef.current, {
+      width: chartContainerRef.current.clientWidth,
+      height: height - 36, // leave room for toggle bar
       layout: {
         background: { color: '#0a0a0f' },
         textColor: '#9ca3af',
@@ -77,78 +98,84 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
     // --- Analysis Overlays ---
     if (analysis) {
       const lastTime = toTime(candles[candles.length - 1].time);
-      const currentPrice = analysis.currentPrice;
 
       // Build markers array
       const markers: SeriesMarker<Time>[] = [];
 
-      // Structure point markers (HH, HL, LH, LL + BOS/CHoCH labels)
-      for (const sp of analysis.marketStructure.structurePoints) {
-        const isHigh =
-          sp.label === 'HH' || sp.label === 'LH' || sp.label === 'EH';
-        const color =
-          sp.breakType === 'BOS'
-            ? '#3b82f6'
-            : sp.breakType === 'CHoCH'
-            ? '#eab308'
-            : '#6b7280';
-        const text =
-          sp.breakType !== 'none'
-            ? `${sp.label} (${sp.breakType})`
-            : sp.label;
+      // Structure point markers
+      if (toggles.structure) {
+        for (const sp of analysis.marketStructure.structurePoints) {
+          const isHigh =
+            sp.label === 'HH' || sp.label === 'LH' || sp.label === 'EH';
+          const color =
+            sp.breakType === 'BOS'
+              ? '#3b82f6'
+              : sp.breakType === 'CHoCH'
+              ? '#eab308'
+              : '#6b7280';
+          const text =
+            sp.breakType !== 'none'
+              ? `${sp.label} (${sp.breakType})`
+              : sp.label;
 
-        markers.push({
-          time: toTime(sp.swing.time),
-          position: isHigh ? 'aboveBar' : 'belowBar',
-          color,
-          shape: isHigh ? 'arrowDown' : 'arrowUp',
-          text,
-        });
+          markers.push({
+            time: toTime(sp.swing.time),
+            position: isHigh ? 'aboveBar' : 'belowBar',
+            color,
+            shape: isHigh ? 'arrowDown' : 'arrowUp',
+            text,
+          });
+        }
       }
 
       // SFP markers
-      for (const sfp of analysis.sfps) {
-        markers.push({
-          time: toTime(sfp.sweepCandle.time),
-          position: sfp.type === 'bullish' ? 'belowBar' : 'aboveBar',
-          color: sfp.type === 'bullish' ? '#22c55e' : '#ef4444',
-          shape: 'circle',
-          text: 'SFP',
-        });
+      if (toggles.sfp) {
+        for (const sfp of analysis.sfps) {
+          markers.push({
+            time: toTime(sfp.sweepCandle.time),
+            position: sfp.type === 'bullish' ? 'belowBar' : 'aboveBar',
+            color: sfp.type === 'bullish' ? '#22c55e' : '#ef4444',
+            shape: 'circle',
+            text: 'SFP',
+          });
+        }
       }
 
-      // Order block markers (unmitigated only)
-      for (const ob of analysis.orderBlocks.filter((o) => !o.mitigated)) {
-        markers.push({
-          time: toTime(ob.time),
-          position: ob.type === 'bullish' ? 'belowBar' : 'aboveBar',
-          color: ob.type === 'bullish' ? '#22c55e80' : '#ef444480',
-          shape: 'square',
-          text: 'OB',
-        });
+      // Order block markers
+      if (toggles.ob) {
+        for (const ob of analysis.orderBlocks.filter((o) => !o.mitigated)) {
+          markers.push({
+            time: toTime(ob.time),
+            position: ob.type === 'bullish' ? 'belowBar' : 'aboveBar',
+            color: ob.type === 'bullish' ? '#22c55e80' : '#ef444480',
+            shape: 'square',
+            text: 'OB',
+          });
+        }
       }
 
-      // FVG markers (unfilled only)
-      for (const fvg of analysis.fvgs.filter((f) => !f.filled)) {
-        markers.push({
-          time: toTime(fvg.time),
-          position: fvg.type === 'bullish' ? 'belowBar' : 'aboveBar',
-          color: fvg.type === 'bullish' ? '#22c55e60' : '#ef444460',
-          shape: 'square',
-          text: 'FVG',
-        });
+      // FVG markers
+      if (toggles.fvg) {
+        for (const fvg of analysis.fvgs.filter((f) => !f.filled)) {
+          markers.push({
+            time: toTime(fvg.time),
+            position: fvg.type === 'bullish' ? 'belowBar' : 'aboveBar',
+            color: fvg.type === 'bullish' ? '#22c55e60' : '#ef444460',
+            shape: 'square',
+            text: 'FVG',
+          });
+        }
       }
 
       // Sort markers by time (required by lightweight-charts)
       markers.sort((a, b) => (a.time as number) - (b.time as number));
 
       // Deduplicate: if two markers have the same time + position, combine text
-      // Priority: SFP > BOS/CHoCH > structure > OB/FVG
       const colorPriority = (color: string) => {
-        if (color === '#22c55e' || color === '#ef4444') return 3; // SFP
-        if (color === '#3b82f6') return 2; // BOS
-        if (color === '#eab308') return 2; // CHoCH
-        return 1; // structure gray, OB, FVG
+        if (color === '#22c55e' || color === '#ef4444') return 3;
+        if (color === '#3b82f6') return 2;
+        if (color === '#eab308') return 2;
+        return 1;
       };
       const deduped: SeriesMarker<Time>[] = [];
       for (const m of markers) {
@@ -159,7 +186,6 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
           prev.position === m.position
         ) {
           prev.text = `${prev.text} | ${m.text}`;
-          // Keep the higher-priority color and shape
           if (colorPriority(m.color) > colorPriority(prev.color)) {
             prev.color = m.color;
             prev.shape = m.shape;
@@ -169,62 +195,62 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
         }
       }
 
-      createSeriesMarkers(candleSeries, deduped);
+      if (deduped.length > 0) {
+        createSeriesMarkers(candleSeries, deduped);
+      }
 
       // --- Range Lines (dealing ranges) ---
-      // First range = current dealing range, second = outer range
-      const drawRanges = analysis.ranges.filter((r) => !r.broken);
+      if (toggles.range) {
+        const drawRanges = analysis.ranges.filter((r) => !r.broken);
 
-      for (let ri = 0; ri < drawRanges.length; ri++) {
-        const range = drawRanges[ri];
-        const isOuter = ri > 0;
-        const opacity = isOuter ? 0.3 : 0.6; // outer range is dimmer
-        const startTime = toTime(Math.min(range.highTime, range.lowTime));
+        for (let ri = 0; ri < drawRanges.length; ri++) {
+          const range = drawRanges[ri];
+          const isOuter = ri > 0;
+          const opacity = isOuter ? 0.3 : 0.6;
+          const startTime = toTime(Math.min(range.highTime, range.lowTime));
 
-        // Range High line (red dashed)
-        const highLine = chart.addSeries(LineSeries, {
-          color: `rgba(239, 68, 68, ${opacity})`,
-          lineWidth: isOuter ? 1 : 2,
-          lineStyle: 2,
-          crosshairMarkerVisible: false,
-          lastValueVisible: !isOuter,
-          priceLineVisible: false,
-          autoscaleInfoProvider: () => null,
-        });
-        highLine.setData([
-          { time: startTime, value: range.high },
-          { time: lastTime, value: range.high },
-        ]);
+          const highLine = chart.addSeries(LineSeries, {
+            color: `rgba(239, 68, 68, ${opacity})`,
+            lineWidth: isOuter ? 1 : 2,
+            lineStyle: 2,
+            crosshairMarkerVisible: false,
+            lastValueVisible: !isOuter,
+            priceLineVisible: false,
+            autoscaleInfoProvider: () => null,
+          });
+          highLine.setData([
+            { time: startTime, value: range.high },
+            { time: lastTime, value: range.high },
+          ]);
 
-        // Range Low line (green dashed)
-        const lowLine = chart.addSeries(LineSeries, {
-          color: `rgba(34, 197, 94, ${opacity})`,
-          lineWidth: isOuter ? 1 : 2,
-          lineStyle: 2,
-          crosshairMarkerVisible: false,
-          lastValueVisible: !isOuter,
-          priceLineVisible: false,
-          autoscaleInfoProvider: () => null,
-        });
-        lowLine.setData([
-          { time: startTime, value: range.low },
-          { time: lastTime, value: range.low },
-        ]);
+          const lowLine = chart.addSeries(LineSeries, {
+            color: `rgba(34, 197, 94, ${opacity})`,
+            lineWidth: isOuter ? 1 : 2,
+            lineStyle: 2,
+            crosshairMarkerVisible: false,
+            lastValueVisible: !isOuter,
+            priceLineVisible: false,
+            autoscaleInfoProvider: () => null,
+          });
+          lowLine.setData([
+            { time: startTime, value: range.low },
+            { time: lastTime, value: range.low },
+          ]);
 
-        // Equilibrium line (yellow dotted)
-        const eqLine = chart.addSeries(LineSeries, {
-          color: `rgba(234, 179, 8, ${isOuter ? 0.15 : 0.35})`,
-          lineWidth: 1,
-          lineStyle: 3,
-          crosshairMarkerVisible: false,
-          lastValueVisible: false,
-          priceLineVisible: false,
-          autoscaleInfoProvider: () => null,
-        });
-        eqLine.setData([
-          { time: startTime, value: range.equilibrium },
-          { time: lastTime, value: range.equilibrium },
-        ]);
+          const eqLine = chart.addSeries(LineSeries, {
+            color: `rgba(234, 179, 8, ${isOuter ? 0.15 : 0.35})`,
+            lineWidth: 1,
+            lineStyle: 3,
+            crosshairMarkerVisible: false,
+            lastValueVisible: false,
+            priceLineVisible: false,
+            autoscaleInfoProvider: () => null,
+          });
+          eqLine.setData([
+            { time: startTime, value: range.equilibrium },
+            { time: lastTime, value: range.equilibrium },
+          ]);
+        }
       }
     }
 
@@ -239,7 +265,7 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
     legend.style.lineHeight = '1.4';
     legend.style.pointerEvents = 'none';
     legend.style.color = '#9ca3af';
-    containerRef.current.appendChild(legend);
+    chartContainerRef.current.appendChild(legend);
 
     const formatPrice = (p: number) => {
       if (p >= 1000) return p.toFixed(2);
@@ -260,14 +286,11 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
         `  <span style="color:${pctColor}">${pctSign}${pct.toFixed(2)}%</span>`;
     };
 
-    // Show last candle by default
     const lastCandle = candles[candles.length - 1];
     updateLegend(lastCandle.open, lastCandle.high, lastCandle.low, lastCandle.close);
 
-    // Update on crosshair move
     chart.subscribeCrosshairMove((param) => {
       if (!param || !param.seriesData || param.seriesData.size === 0) {
-        // Reset to last candle when cursor leaves
         updateLegend(lastCandle.open, lastCandle.high, lastCandle.low, lastCandle.close);
         return;
       }
@@ -277,14 +300,12 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
       }
     });
 
-    // Fit content
     chart.timeScale().fitContent();
 
-    // Handle resize
     const handleResize = () => {
-      if (containerRef.current && chartRef.current) {
+      if (chartContainerRef.current && chartRef.current) {
         chartRef.current.applyOptions({
-          width: containerRef.current.clientWidth,
+          width: chartContainerRef.current.clientWidth,
         });
       }
     };
@@ -297,7 +318,15 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
         chartRef.current = null;
       }
     };
-  }, [candles, analysis, height]);
+  }, [candles, analysis, height, toggles]);
+
+  const toggleButtons: { key: keyof IndicatorToggles; label: string; color: string }[] = [
+    { key: 'structure', label: 'Structure', color: '#6b7280' },
+    { key: 'sfp', label: 'SFPs', color: '#22c55e' },
+    { key: 'ob', label: 'OBs', color: '#a78bfa' },
+    { key: 'fvg', label: 'FVGs', color: '#f97316' },
+    { key: 'range', label: 'Range', color: '#eab308' },
+  ];
 
   if (candles.length === 0) {
     return (
@@ -314,10 +343,31 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
   }
 
   return (
-    <div
-      ref={containerRef}
-      style={{ height: `${height}px`, position: 'relative' }}
-      className="w-full rounded-lg overflow-hidden"
-    />
+    <div ref={containerRef} style={{ height: `${height}px` }} className="w-full rounded-lg overflow-hidden">
+      {/* Indicator toggle bar */}
+      <div className="flex items-center gap-1.5 px-2 py-1 bg-[#0a0a0f] border-b border-gray-800" style={{ height: '36px' }}>
+        <span className="text-[10px] text-gray-600 mr-1">Indicators:</span>
+        {toggleButtons.map(({ key, label, color }) => (
+          <button
+            key={key}
+            onClick={() => toggle(key)}
+            className="px-2 py-0.5 rounded text-[11px] font-medium transition-all"
+            style={{
+              backgroundColor: toggles[key] ? `${color}20` : 'transparent',
+              color: toggles[key] ? color : '#4b5563',
+              border: `1px solid ${toggles[key] ? `${color}40` : '#374151'}`,
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {/* Chart canvas */}
+      <div
+        ref={chartContainerRef}
+        style={{ height: `${height - 36}px`, position: 'relative' }}
+        className="w-full"
+      />
+    </div>
   );
 }
