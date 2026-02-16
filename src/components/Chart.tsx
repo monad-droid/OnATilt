@@ -72,6 +72,7 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
       timeScale: {
         borderColor: '#374151',
         timeVisible: true,
+        rightOffset: 20,
       },
     });
     chartRef.current = chart;
@@ -98,6 +99,8 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
     // --- Analysis Overlays ---
     if (analysis) {
       const lastTime = toTime(candles[candles.length - 1].time);
+      // Extend range lines far past the last candle so they reach the right edge
+      const farFutureTime = toTime(candles[candles.length - 1].time + 365 * 86_400_000);
 
       // Build markers array
       const markers: SeriesMarker<Time>[] = [];
@@ -220,7 +223,7 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
           });
           highLine.setData([
             { time: startTime, value: range.high },
-            { time: lastTime, value: range.high },
+            { time: farFutureTime, value: range.high },
           ]);
 
           const lowLine = chart.addSeries(LineSeries, {
@@ -234,7 +237,7 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
           });
           lowLine.setData([
             { time: startTime, value: range.low },
-            { time: lastTime, value: range.low },
+            { time: farFutureTime, value: range.low },
           ]);
 
           const eqLine = chart.addSeries(LineSeries, {
@@ -248,7 +251,7 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
           });
           eqLine.setData([
             { time: startTime, value: range.equilibrium },
-            { time: lastTime, value: range.equilibrium },
+            { time: farFutureTime, value: range.equilibrium },
           ]);
         }
       }
