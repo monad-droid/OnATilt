@@ -275,6 +275,147 @@ export function scanForSFPs(
 }
 
 // ============================================================
+// SFP Debug Trace — trace through each swing to see why SFPs
+// were or weren't detected
+// ============================================================
+
+export interface SwingTrace {
+  type: 'high' | 'low';
+  price: number;
+  index: number;
+  candlesChecked: number;
+  outcome: 'sfp_found' | 'broken' | 'no_sweep' | 'wick_too_small';
+  // If broken: which candle broke it
+  brokenAtIndex?: number;
+  brokenByClose?: number;
+  // If SFP found: which candle
+  sfpAtIndex?: number;
+  sfpCandleHigh?: number;
+  sfpCandleLow?: number;
+  sfpCandleClose?: number;
+  // Nearest sweep attempt (candle that got closest to sweeping)
+  nearestSweepIndex?: number;
+  nearestSweepDistance?: number;
+}
+
+export function debugSFPDetection(
+  candles: Candle[],
+  swingStrength: number = 3,
+  minWickPercent: number = 0.0005,
+) {
+  const ms = analyzeMarketStructure(candles, swingStrength);
+  const traces: SwingTrace[] = [];
+
+  for (const swing of ms.swings) {
+    const trace: SwingTrace = {
+      type: swing.type,
+      price: swing.price,
+      index: swing.index,
+      candlesChecked: 0,
+      outcome: 'no_sweep',
+    };
+
+    let nearestDist = Infinity;
+
+    for (let i = swing.index + 1; i < candles.length; i++) {
+      const c = candles[i];
+      trace.candlesChecked++;
+
+      if (swing.type === 'high') {
+        // Track closest approach
+        const dist = swing.price - c.high; // positive = didn't reach, negative = wicked above
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          trace.nearestSweepIndex = i;
+          trace.nearestSweepDistance = dist;
+        }
+
+        // Check SFP
+        if (c.high > swing.price && c.close < swing.price) {
+          const wickDepth = c.high - swing.price;
+          if (wickDepth / swing.price >= minWickPercent) {
+            trace.outcome = 'sfp_found';
+            trace.sfpAtIndex = i;
+            trace.sfpCandleHigh = c.high;
+            trace.sfpCandleClose = c.close;
+            break;
+          } else {
+            trace.outcome = 'wick_too_small';
+            trace.sfpAtIndex = i;
+            trace.sfpCandleHigh = c.high;
+            trace.sfpCandleClose = c.close;
+          }
+        }
+        // Broken check
+        if (c.close > swing.price) {
+          trace.outcome = 'broken';
+          trace.brokenAtIndex = i;
+          trace.brokenByClose = c.close;
+          break;
+        }
+      }
+
+      if (swing.type === 'low') {
+        const dist = c.low - swing.price; // positive = didn't reach, negative = wicked below
+        if (dist < nearestDist) {
+          nearestDist = dist;
+          trace.nearestSweepIndex = i;
+          trace.nearestSweepDistance = dist;
+        }
+
+        if (c.low < swing.price && c.close > swing.price) {
+          const wickDepth = swing.price - c.low;
+          if (wickDepth / swing.price >= minWickPercent) {
+            trace.outcome = 'sfp_found';
+            trace.sfpAtIndex = i;
+            trace.sfpCandleLow = c.low;
+            trace.sfpCandleClose = c.close;
+            break;
+          } else {
+            trace.outcome = 'wick_too_small';
+            trace.sfpAtIndex = i;
+            trace.sfpCandleLow = c.low;
+            trace.sfpCandleClose = c.close;
+          }
+        }
+        if (c.close < swing.price) {
+          trace.outcome = 'broken';
+          trace.brokenAtIndex = i;
+          trace.brokenByClose = c.close;
+          break;
+        }
+      }
+    }
+
+    traces.push(trace);
+  }
+
+  // Also run actual detection for comparison
+  const allSFPs = detectSFPs(candles, ms.swings, minWickPercent);
+
+  return {
+    totalCandles: candles.length,
+    lastCandleTime: candles[candles.length - 1]?.time,
+    lastCandleOHLC: candles.length > 0 ? {
+      open: candles[candles.length - 1].open,
+      high: candles[candles.length - 1].high,
+      low: candles[candles.length - 1].low,
+      close: candles[candles.length - 1].close,
+    } : null,
+    trend: ms.trend,
+    swingHighs: traces.filter(t => t.type === 'high'),
+    swingLows: traces.filter(t => t.type === 'low'),
+    allSFPs: allSFPs.map(sfp => ({
+      type: sfp.type,
+      swungPrice: sfp.sweptSwing.price,
+      sweptAtIndex: sfp.sweepCandleIndex,
+      wickDepth: sfp.wickDepth,
+      sweepCandleTime: sfp.sweepCandle.time,
+    })),
+  };
+}
+
+// ============================================================
 // Range Detection — ICT Current Price Leg
 // ============================================================
 

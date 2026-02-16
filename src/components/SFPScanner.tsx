@@ -16,6 +16,9 @@ interface SFPScannerProps {
   onSelectCoin: (coin: string, timeframe: Timeframe) => void;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type DebugData = Record<string, any>;
+
 export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1w');
   const [scanning, setScanning] = useState(false);
@@ -26,6 +29,13 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [filter, setFilter] = useState<'all' | 'bullish' | 'bearish'>('all');
   const cancelRef = useRef(false);
 
+  // Debug state
+  const [showDebug, setShowDebug] = useState(false);
+  const [debugCoin, setDebugCoin] = useState('');
+  const [debugLoading, setDebugLoading] = useState(false);
+  const [debugResult, setDebugResult] = useState<DebugData | null>(null);
+  const [debugError, setDebugError] = useState<string | null>(null);
+
   const startScan = useCallback(async () => {
     setScanning(true);
     setError(null);
@@ -35,7 +45,6 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     setProgress({ scanned: 0, total: 0, found: 0 });
 
     try {
-      // Fetch all available perp tokens
       const assetsRes = await fetch('/api/market-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -52,7 +61,6 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
       const allCoins: string[] = assetsData.assets.map((a: { name: string }) => a.name);
       setProgress({ scanned: 0, total: allCoins.length, found: 0 });
 
-      // Batch scan
       const allResults: ScannerResult[] = [];
 
       for (let i = 0; i < allCoins.length; i += BATCH_SIZE) {
@@ -97,24 +105,47 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     cancelRef.current = true;
   }, []);
 
+  const runDebug = useCallback(async () => {
+    if (!debugCoin.trim()) return;
+    setDebugLoading(true);
+    setDebugError(null);
+    setDebugResult(null);
+
+    try {
+      const res = await fetch('/api/scanner', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'debug', coin: debugCoin.trim().toUpperCase(), timeframe }),
+      });
+
+      const data = await res.json();
+      if (data.error) {
+        setDebugError(data.error);
+      } else {
+        setDebugResult(data);
+      }
+    } catch (err) {
+      setDebugError(err instanceof Error ? err.message : 'Debug failed');
+    } finally {
+      setDebugLoading(false);
+    }
+  }, [debugCoin, timeframe]);
+
   const filteredResults = results.filter((r) => {
     if (filter === 'all') return true;
     return r.sfps.some((sfp) => sfp.type === filter);
   });
 
-  // Sort: bearish first (potential shorts at top), then bullish
   const sortedResults = [...filteredResults].sort((a, b) => {
     const aType = a.sfps[0]?.type === 'bearish' ? 0 : 1;
     const bType = b.sfps[0]?.type === 'bearish' ? 0 : 1;
     if (aType !== bType) return aType - bType;
-    // Within same type, sort by wick depth % (largest first)
     const aWick = a.sfps[0] ? (a.sfps[0].wickDepth / a.sfps[0].sweptSwing.price) * 100 : 0;
     const bWick = b.sfps[0] ? (b.sfps[0].wickDepth / b.sfps[0].sweptSwing.price) * 100 : 0;
     return bWick - aWick;
   });
 
   const progressPercent = progress.total > 0 ? (progress.scanned / progress.total) * 100 : 0;
-
   const tfLabel = SCAN_TIMEFRAMES.find((t) => t.value === timeframe)?.desc ?? timeframe;
 
   return (
@@ -122,12 +153,18 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <h2 className="text-lg font-bold text-white">SFP Scanner</h2>
-        <span className="text-xs text-gray-500">All Hyperliquid Perps</span>
+        <button
+          onClick={() => setShowDebug(!showDebug)}
+          className={`text-xs px-2 py-1 rounded transition-colors ${
+            showDebug ? 'bg-yellow-500/20 text-yellow-400' : 'text-gray-600 hover:text-gray-400'
+          }`}
+        >
+          {showDebug ? 'Hide Debug' : 'Debug'}
+        </button>
       </div>
 
       {/* Controls */}
       <div className="flex items-center gap-3 mb-4 flex-wrap">
-        {/* Timeframe selector */}
         <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
           {SCAN_TIMEFRAMES.map((tf) => (
             <button
@@ -145,7 +182,6 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           ))}
         </div>
 
-        {/* Scan / Cancel button */}
         {scanning ? (
           <button
             onClick={cancelScan}
@@ -162,7 +198,6 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           </button>
         )}
 
-        {/* Filter (only show after scan) */}
         {hasScanned && results.length > 0 && (
           <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5 ml-auto">
             {(['all', 'bullish', 'bearish'] as const).map((f) => (
@@ -185,6 +220,40 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           </div>
         )}
       </div>
+
+      {/* Debug Panel */}
+      {showDebug && (
+        <div className="mb-4 border border-yellow-500/30 rounded-xl p-3 bg-yellow-500/5">
+          <div className="flex items-center gap-2 mb-3">
+            <input
+              type="text"
+              value={debugCoin}
+              onChange={(e) => setDebugCoin(e.target.value.toUpperCase())}
+              onKeyDown={(e) => e.key === 'Enter' && runDebug()}
+              placeholder="SKY"
+              className="w-24 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm font-semibold focus:outline-none focus:border-yellow-500 text-center uppercase"
+            />
+            <button
+              onClick={runDebug}
+              disabled={debugLoading || !debugCoin.trim()}
+              className="px-4 py-1.5 bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-yellow-500/30 transition-colors"
+            >
+              {debugLoading ? 'Tracing...' : 'Trace SFP Detection'}
+            </button>
+            <span className="text-xs text-gray-500">on {timeframe}</span>
+          </div>
+
+          {debugError && (
+            <div className="text-red-400 text-xs mb-2">{debugError}</div>
+          )}
+
+          {debugResult && (
+            <div className="max-h-80 overflow-auto">
+              <DebugOutput data={debugResult} />
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Progress bar */}
       {scanning && (
@@ -313,7 +382,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
       )}
 
       {/* Empty states */}
-      {!scanning && !hasScanned && results.length === 0 && (
+      {!scanning && !hasScanned && results.length === 0 && !showDebug && (
         <div className="flex-1 flex items-center justify-center">
           <div className="text-center">
             <div className="text-gray-600 text-4xl mb-3">&#x1F50D;</div>
@@ -357,6 +426,122 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           </p>
         </div>
       )}
+    </div>
+  );
+}
+
+// ============================================================
+// Debug Output Component — renders the trace data readably
+// ============================================================
+
+function DebugOutput({ data }: { data: DebugData }) {
+  const debug = data.debug;
+  if (!debug) return <pre className="text-xs text-gray-400 font-mono">{JSON.stringify(data, null, 2)}</pre>;
+
+  const { totalCandles, trend, lastCandleOHLC, swingHighs, swingLows, allSFPs } = debug;
+
+  return (
+    <div className="space-y-3 text-xs font-mono">
+      {/* Summary */}
+      <div className="text-gray-300">
+        <span className="text-yellow-400">{data.coin}</span> {data.timeframe}
+        {' \u2014 '}{totalCandles} candles, trend: <span className={
+          trend === 'bullish' ? 'text-green-400' : trend === 'bearish' ? 'text-red-400' : 'text-gray-400'
+        }>{trend}</span>
+      </div>
+
+      {lastCandleOHLC && (
+        <div className="text-gray-500">
+          Last candle: O={lastCandleOHLC.open} H={lastCandleOHLC.high} L={lastCandleOHLC.low} C={lastCandleOHLC.close}
+        </div>
+      )}
+
+      {/* SFPs found */}
+      <div>
+        <div className="text-white font-bold mb-1">
+          SFPs detected: {allSFPs.length === 0 ? 'NONE' : allSFPs.length}
+        </div>
+        {allSFPs.map((sfp: DebugData, i: number) => (
+          <div key={i} className={`ml-2 ${sfp.type === 'bullish' ? 'text-green-400' : 'text-red-400'}`}>
+            {sfp.type} SFP at index {sfp.sweptAtIndex} (candle {totalCandles - 1 - sfp.sweptAtIndex} from end)
+            {' \u2014 '}swept {sfp.swungPrice.toFixed(8)}, wick depth: {sfp.wickDepth.toFixed(8)}
+          </div>
+        ))}
+      </div>
+
+      {/* Swing Highs */}
+      <div>
+        <div className="text-red-300 font-bold mb-1">Swing Highs ({swingHighs.length}):</div>
+        {swingHighs.map((t: DebugData, i: number) => (
+          <div key={i} className="ml-2 mb-1">
+            <span className="text-white">idx={t.index}</span>
+            {' '}price=<span className="text-yellow-300">{t.price.toFixed(8)}</span>
+            {' \u2192 '}
+            <span className={
+              t.outcome === 'sfp_found' ? 'text-green-400' :
+              t.outcome === 'broken' ? 'text-red-400' :
+              t.outcome === 'wick_too_small' ? 'text-yellow-400' :
+              'text-gray-500'
+            }>
+              {t.outcome}
+            </span>
+            {t.outcome === 'broken' && (
+              <span className="text-red-400/70">
+                {' '}at idx={t.brokenAtIndex}, close={t.brokenByClose?.toFixed(8)}
+                {' '}({t.candlesChecked} candles checked)
+              </span>
+            )}
+            {t.outcome === 'sfp_found' && (
+              <span className="text-green-400/70">
+                {' '}at idx={t.sfpAtIndex}, H={t.sfpCandleHigh?.toFixed(8)} C={t.sfpCandleClose?.toFixed(8)}
+              </span>
+            )}
+            {t.outcome === 'no_sweep' && t.nearestSweepDistance !== undefined && (
+              <span className="text-gray-500">
+                {' '}nearest approach: {t.nearestSweepDistance > 0 ? '+' : ''}{t.nearestSweepDistance.toFixed(8)} at idx={t.nearestSweepIndex}
+                {' '}({t.candlesChecked} candles checked)
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
+
+      {/* Swing Lows */}
+      <div>
+        <div className="text-green-300 font-bold mb-1">Swing Lows ({swingLows.length}):</div>
+        {swingLows.map((t: DebugData, i: number) => (
+          <div key={i} className="ml-2 mb-1">
+            <span className="text-white">idx={t.index}</span>
+            {' '}price=<span className="text-yellow-300">{t.price.toFixed(8)}</span>
+            {' \u2192 '}
+            <span className={
+              t.outcome === 'sfp_found' ? 'text-green-400' :
+              t.outcome === 'broken' ? 'text-red-400' :
+              t.outcome === 'wick_too_small' ? 'text-yellow-400' :
+              'text-gray-500'
+            }>
+              {t.outcome}
+            </span>
+            {t.outcome === 'broken' && (
+              <span className="text-red-400/70">
+                {' '}at idx={t.brokenAtIndex}, close={t.brokenByClose?.toFixed(8)}
+                {' '}({t.candlesChecked} candles checked)
+              </span>
+            )}
+            {t.outcome === 'sfp_found' && (
+              <span className="text-green-400/70">
+                {' '}at idx={t.sfpAtIndex}, L={t.sfpCandleLow?.toFixed(8)} C={t.sfpCandleClose?.toFixed(8)}
+              </span>
+            )}
+            {t.outcome === 'no_sweep' && t.nearestSweepDistance !== undefined && (
+              <span className="text-gray-500">
+                {' '}nearest approach: {t.nearestSweepDistance > 0 ? '+' : ''}{t.nearestSweepDistance.toFixed(8)} at idx={t.nearestSweepIndex}
+                {' '}({t.candlesChecked} candles checked)
+              </span>
+            )}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

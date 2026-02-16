@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchCandles } from '@/lib/hyperliquid';
-import { scanForSFPs } from '@/lib/analysis';
+import { scanForSFPs, debugSFPDetection } from '@/lib/analysis';
 import type { Timeframe, ScannerResult } from '@/types';
 
 const CANDLE_LIMITS: Partial<Record<Timeframe, number>> = {
@@ -13,6 +13,27 @@ const CANDLE_LIMITS: Partial<Record<Timeframe, number>> = {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
+    const { action } = body as { action?: string };
+
+    // Debug mode: trace SFP detection for a single coin
+    if (action === 'debug') {
+      const { coin, timeframe = '1w' } = body as { coin: string; timeframe?: Timeframe };
+      if (!coin) {
+        return NextResponse.json({ error: 'coin required for debug' }, { status: 400 });
+      }
+
+      const limit = CANDLE_LIMITS[timeframe] ?? 100;
+      const candles = await fetchCandles(coin, timeframe, limit);
+
+      if (candles.length < 10) {
+        return NextResponse.json({ error: `Only ${candles.length} candles — not enough data` }, { status: 400 });
+      }
+
+      const debug = debugSFPDetection(candles, 3);
+      return NextResponse.json({ coin, timeframe, debug });
+    }
+
+    // Normal batch scan
     const { coins, timeframe = '1w', recentCandles = 2 } = body as {
       coins: string[];
       timeframe?: Timeframe;
@@ -30,12 +51,10 @@ export async function POST(request: NextRequest) {
     const limit = CANDLE_LIMITS[timeframe] ?? 100;
     const results: ScannerResult[] = [];
 
-    // Process all coins in this batch concurrently
     const promises = coins.map(async (coin): Promise<ScannerResult | null> => {
       try {
         const candles = await fetchCandles(coin, timeframe, limit);
 
-        // Need minimum candles for meaningful swing detection
         if (candles.length < 10) return null;
 
         const { trend, sfps, currentPrice } = scanForSFPs(candles, 3, recentCandles);
@@ -51,7 +70,6 @@ export async function POST(request: NextRequest) {
           scannedAt: Date.now(),
         };
       } catch {
-        // Skip tokens that fail (delisted, no data, etc.)
         return null;
       }
     });
