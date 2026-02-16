@@ -4,7 +4,6 @@ import { useEffect, useRef, useState } from 'react';
 import {
   createChart,
   CandlestickSeries,
-  LineSeries,
   createSeriesMarkers,
 } from 'lightweight-charts';
 import type { IChartApi, UTCTimestamp, SeriesMarker, Time } from 'lightweight-charts';
@@ -107,10 +106,6 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
 
     // --- Analysis Overlays ---
     if (analysis) {
-      const lastTime = toTime(candles[candles.length - 1].time);
-      // Extend range lines far past the last candle so they reach the right edge
-      const farFutureTime = toTime(candles[candles.length - 1].time + 365 * 86_400_000);
-
       // Build markers array
       const markers: SeriesMarker<Time>[] = [];
 
@@ -211,7 +206,8 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
         createSeriesMarkers(candleSeries, deduped);
       }
 
-      // --- Range Lines (dealing ranges) ---
+      // --- Range Lines (dealing ranges) via price lines ---
+      // Price lines span the full visible width, acting as horizontal rays.
       if (toggles.range) {
         const drawRanges = analysis.ranges.filter((r) => !r.broken);
 
@@ -219,49 +215,33 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
           const range = drawRanges[ri];
           const isOuter = ri > 0;
           const opacity = isOuter ? 0.3 : 0.6;
-          const startTime = toTime(Math.min(range.highTime, range.lowTime));
 
-          const highLine = chart.addSeries(LineSeries, {
+          candleSeries.createPriceLine({
+            price: range.high,
             color: `rgba(239, 68, 68, ${opacity})`,
             lineWidth: isOuter ? 1 : 2,
             lineStyle: 2,
-            crosshairMarkerVisible: false,
-            lastValueVisible: !isOuter,
-            priceLineVisible: false,
-            autoscaleInfoProvider: () => null,
+            axisLabelVisible: !isOuter,
+            title: !isOuter ? 'Range H' : '',
           });
-          highLine.setData([
-            { time: startTime, value: range.high },
-            { time: farFutureTime, value: range.high },
-          ]);
 
-          const lowLine = chart.addSeries(LineSeries, {
+          candleSeries.createPriceLine({
+            price: range.low,
             color: `rgba(34, 197, 94, ${opacity})`,
             lineWidth: isOuter ? 1 : 2,
             lineStyle: 2,
-            crosshairMarkerVisible: false,
-            lastValueVisible: !isOuter,
-            priceLineVisible: false,
-            autoscaleInfoProvider: () => null,
+            axisLabelVisible: !isOuter,
+            title: !isOuter ? 'Range L' : '',
           });
-          lowLine.setData([
-            { time: startTime, value: range.low },
-            { time: farFutureTime, value: range.low },
-          ]);
 
-          const eqLine = chart.addSeries(LineSeries, {
+          candleSeries.createPriceLine({
+            price: range.equilibrium,
             color: `rgba(234, 179, 8, ${isOuter ? 0.15 : 0.35})`,
             lineWidth: 1,
             lineStyle: 3,
-            crosshairMarkerVisible: false,
-            lastValueVisible: false,
-            priceLineVisible: false,
-            autoscaleInfoProvider: () => null,
+            axisLabelVisible: false,
+            title: '',
           });
-          eqLine.setData([
-            { time: startTime, value: range.equilibrium },
-            { time: farFutureTime, value: range.equilibrium },
-          ]);
         }
       }
     }
