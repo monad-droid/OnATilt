@@ -1,0 +1,106 @@
+//@version=5
+indicator("Swing Failure Pattern (SFP)", overlay=true, max_labels_count=500)
+
+// ── Inputs ──────────────────────────────────────────────────
+swingLen      = input.int(3,     "Swing Lookback/Lookahead", minval=1, maxval=20)
+minWickPct    = input.float(0.05,"Min Wick Beyond Swing (%)", minval=0.0, step=0.01)
+maxBarsBack   = input.int(80,    "Max Bars After Swing",      minval=5,  maxval=200)
+showBullish   = input.bool(true, "Show Bullish SFPs")
+showBearish   = input.bool(true, "Show Bearish SFPs")
+bullColor     = input.color(color.new(#00e676, 0), "Bullish Color")
+bearColor     = input.color(color.new(#ff1744, 0), "Bearish Color")
+
+// ── Swing Detection ─────────────────────────────────────────
+isSwingHigh(idx) =>
+    result = true
+    for j = 1 to swingLen
+        if high[idx] <= high[idx + j] or high[idx] <= high[idx - j]
+            result := false
+            break
+    result
+
+isSwingLow(idx) =>
+    result = true
+    for j = 1 to swingLen
+        if low[idx] <= low[idx + j] or low[idx] <= low[idx - j]  // fixed: >= for lows
+            result := false
+    result
+
+isSwingLow2(idx) =>
+    result = true
+    for j = 1 to swingLen
+        if low[idx] >= low[idx + j] or low[idx] >= low[idx - j]
+            result := false
+            break
+    result
+
+// ── Store Swing Levels ──────────────────────────────────────
+// We track up to 10 recent swing highs and swing lows
+var float[] swingHighPrices = array.new_float(0)
+var int[]   swingHighBars   = array.new_int(0)
+var float[] swingLowPrices  = array.new_float(0)
+var int[]   swingLowBars    = array.new_int(0)
+
+maxSwings = 15
+
+// Detect new swing high (confirmed swingLen bars ago)
+if isSwingHigh(swingLen)
+    array.unshift(swingHighPrices, high[swingLen])
+    array.unshift(swingHighBars,   bar_index - swingLen)
+    if array.size(swingHighPrices) > maxSwings
+        array.pop(swingHighPrices)
+        array.pop(swingHighBars)
+
+// Detect new swing low (confirmed swingLen bars ago)
+if isSwingLow2(swingLen)
+    array.unshift(swingLowPrices, low[swingLen])
+    array.unshift(swingLowBars,   bar_index - swingLen)
+    if array.size(swingLowPrices) > maxSwings
+        array.pop(swingLowPrices)
+        array.pop(swingLowBars)
+
+// ── SFP Detection on Current Bar ────────────────────────────
+bearishSFP = false
+bullishSFP = false
+float sweptLevel = na
+
+// Check bearish SFP: current bar wicks above a swing high but closes below it
+if showBearish
+    for i = 0 to math.min(array.size(swingHighPrices) - 1, maxSwings - 1)
+        swPrice  = array.get(swingHighPrices, i)
+        swBar    = array.get(swingHighBars, i)
+        barsAgo  = bar_index - swBar
+        wickDepth = high - swPrice
+
+        if barsAgo > 0 and barsAgo <= maxBarsBack
+            if high > swPrice and close < swPrice
+                if (wickDepth / swPrice) * 100 >= minWickPct
+                    bearishSFP := true
+                    sweptLevel := swPrice
+                    break
+
+// Check bullish SFP: current bar wicks below a swing low but closes above it
+if showBullish
+    for i = 0 to math.min(array.size(swingLowPrices) - 1, maxSwings - 1)
+        swPrice  = array.get(swingLowPrices, i)
+        swBar    = array.get(swingLowBars, i)
+        barsAgo  = bar_index - swBar
+        wickDepth = swPrice - low
+
+        if barsAgo > 0 and barsAgo <= maxBarsBack
+            if low < swPrice and close > swPrice
+                if (wickDepth / swPrice) * 100 >= minWickPct
+                    bullishSFP := true
+                    sweptLevel := swPrice
+                    break
+
+// ── Plot ────────────────────────────────────────────────────
+plotshape(bearishSFP, title="Bearish SFP", style=shape.triangledown,
+     location=location.abovebar, color=bearColor, size=size.small, text="SFP")
+
+plotshape(bullishSFP, title="Bullish SFP", style=shape.triangleup,
+     location=location.belowbar, color=bullColor, size=size.small, text="SFP")
+
+// ── Alerts ──────────────────────────────────────────────────
+alertcondition(bearishSFP, title="Bearish SFP", message="Bearish SFP detected — swept swing high at {{close}}")
+alertcondition(bullishSFP, title="Bullish SFP", message="Bullish SFP detected — swept swing low at {{close}}")
