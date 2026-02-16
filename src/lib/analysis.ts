@@ -242,17 +242,64 @@ export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPerce
 }
 
 // ============================================================
-// Range Detection — Dealing Range Approach
+// Range Detection — Dealing Range (Price Leg) Approach
 // ============================================================
 
 /**
- * Find the current dealing range: the nearest unbroken swing high
- * above price and nearest unbroken swing low below price.
- * This tells you "where am I trading right now?" rather than
- * searching for historical consolidation zones.
+ * Helper: given a swing point, walk backward through chronologically
+ * sorted swings to find the opposing swing that started the leg.
+ * e.g. for a swing high, find the most recent preceding swing low.
+ */
+function findLegOrigin(
+  anchor: SwingPoint,
+  sortedSwings: SwingPoint[],
+): SwingPoint | undefined {
+  const targetType = anchor.type === 'high' ? 'low' : 'high';
+  for (let i = sortedSwings.length - 1; i >= 0; i--) {
+    const s = sortedSwings[i];
+    if (s.type === targetType && s.index < anchor.index) return s;
+  }
+  return undefined;
+}
+
+/**
+ * Build a Range object from a high/low swing pair.
+ */
+function buildRange(
+  highSwing: SwingPoint,
+  lowSwing: SwingPoint,
+  currentPrice: number,
+): Range {
+  const rangeSize = highSwing.price - lowSwing.price;
+  const broken = currentPrice > highSwing.price || currentPrice < lowSwing.price;
+  return {
+    high: highSwing.price,
+    low: lowSwing.price,
+    highTime: highSwing.time,
+    lowTime: lowSwing.time,
+    highIndex: highSwing.index,
+    lowIndex: lowSwing.index,
+    equilibrium: (highSwing.price + lowSwing.price) / 2,
+    premium: lowSwing.price + rangeSize * 0.75,
+    discount: lowSwing.price + rangeSize * 0.25,
+    broken,
+    brokenDirection: broken
+      ? currentPrice > highSwing.price ? 'above' : 'below'
+      : undefined,
+  };
+}
+
+/**
+ * Find the current dealing range by identifying the price leg that
+ * brackets the current price.
  *
- * Also finds the previous dealing range (the one that was broken
- * to get here) for context on the larger structure.
+ * 1. Find the nearest unbroken swing high above price (the ceiling).
+ * 2. Walk backward to find the swing low that started the leg up to
+ *    that high — that swing low is the range low.
+ * 3. Repeat one level out for the outer dealing range.
+ *
+ * If price is outside all unbroken swings, fall back to the most
+ * recent completed price leg.
  */
 export function detectRanges(
   candles: Candle[],
@@ -262,83 +309,53 @@ export function detectRanges(
 
   const currentPrice = candles[candles.length - 1].close;
   const ranges: Range[] = [];
+  const sorted = [...swings].sort((a, b) => a.index - b.index);
 
   // --- Current Dealing Range ---
   // Nearest unbroken swing high above price (the ceiling)
-  const unbrokenhHighsAbove = swings
+  const ceilingSwings = sorted
     .filter(s => s.type === 'high' && !s.broken && s.price > currentPrice)
-    .sort((a, b) => a.price - b.price); // lowest first = nearest ceiling
+    .sort((a, b) => a.price - b.price); // lowest first = nearest
 
-  // Nearest unbroken swing low below price (the floor)
-  const unbrokenLowsBelow = swings
-    .filter(s => s.type === 'low' && !s.broken && s.price < currentPrice)
-    .sort((a, b) => b.price - a.price); // highest first = nearest floor
+  let innerHigh: SwingPoint | undefined;
+  let innerLow: SwingPoint | undefined;
 
-  if (unbrokenhHighsAbove.length > 0 && unbrokenLowsBelow.length > 0) {
-    const rangeHighSwing = unbrokenhHighsAbove[0];
-    const rangeLowSwing = unbrokenLowsBelow[0];
-    const rangeSize = rangeHighSwing.price - rangeLowSwing.price;
+  // Try each ceiling candidate until we find one with a valid leg origin
+  for (const candidate of ceilingSwings) {
+    const legLow = findLegOrigin(candidate, sorted);
+    if (legLow) {
+      innerHigh = candidate;
+      innerLow = legLow;
+      break;
+    }
+  }
 
-    ranges.push({
-      high: rangeHighSwing.price,
-      low: rangeLowSwing.price,
-      highTime: rangeHighSwing.time,
-      lowTime: rangeLowSwing.time,
-      highIndex: rangeHighSwing.index,
-      lowIndex: rangeLowSwing.index,
-      equilibrium: (rangeHighSwing.price + rangeLowSwing.price) / 2,
-      premium: rangeLowSwing.price + rangeSize * 0.75,
-      discount: rangeLowSwing.price + rangeSize * 0.25,
-      broken: false,
-    });
+  if (innerHigh && innerLow) {
+    ranges.push(buildRange(innerHigh, innerLow, currentPrice));
 
-    // --- Previous Dealing Range (one level out) ---
-    // The next swing high above the current range high
-    const outerHigh = unbrokenhHighsAbove.find(s => s.price > rangeHighSwing.price);
-    // The next swing low below the current range low
-    const outerLow = unbrokenLowsBelow.find(s => s.price < rangeLowSwing.price);
-
-    if (outerHigh && outerLow) {
-      const outerSize = outerHigh.price - outerLow.price;
-      ranges.push({
-        high: outerHigh.price,
-        low: outerLow.price,
-        highTime: outerHigh.time,
-        lowTime: outerLow.time,
-        highIndex: outerHigh.index,
-        lowIndex: outerLow.index,
-        equilibrium: (outerHigh.price + outerLow.price) / 2,
-        premium: outerLow.price + outerSize * 0.75,
-        discount: outerLow.price + outerSize * 0.25,
-        broken: false,
-      });
+    // --- Outer Dealing Range (one level out) ---
+    // Next unbroken swing high above the inner range high
+    const outerHighCandidates = ceilingSwings.filter(s => s.price > innerHigh!.price);
+    for (const candidate of outerHighCandidates) {
+      const legLow = findLegOrigin(candidate, sorted);
+      if (legLow) {
+        ranges.push(buildRange(candidate, legLow, currentPrice));
+        break;
+      }
     }
   } else {
-    // Fallback: if price is above all swing highs or below all swing lows,
-    // use the two most recent swings to define the leg
-    const recentSwings = swings.slice(-10);
-    const recentHighs = recentSwings.filter(s => s.type === 'high').sort((a, b) => b.price - a.price);
-    const recentLows = recentSwings.filter(s => s.type === 'low').sort((a, b) => a.price - b.price);
-
-    if (recentHighs.length > 0 && recentLows.length > 0) {
-      const sh = recentHighs[0];
-      const sl = recentLows[0];
-      const rangeSize = sh.price - sl.price;
-      if (rangeSize > 0) {
-        const broken = currentPrice > sh.price || currentPrice < sl.price;
-        ranges.push({
-          high: sh.price,
-          low: sl.price,
-          highTime: sh.time,
-          lowTime: sl.time,
-          highIndex: sh.index,
-          lowIndex: sl.index,
-          equilibrium: (sh.price + sl.price) / 2,
-          premium: sl.price + rangeSize * 0.75,
-          discount: sl.price + rangeSize * 0.25,
-          broken,
-          brokenDirection: currentPrice > sh.price ? 'above' : currentPrice < sl.price ? 'below' : undefined,
-        });
+    // Fallback: price is above all swing highs or no valid leg found.
+    // Use the most recent completed price leg (last two opposing swings).
+    for (let i = sorted.length - 1; i >= 1; i--) {
+      const a = sorted[i];
+      const b = sorted[i - 1];
+      if (a.type !== b.type) {
+        const high = a.type === 'high' ? a : b;
+        const low = a.type === 'low' ? a : b;
+        if (high.price > low.price) {
+          ranges.push(buildRange(high, low, currentPrice));
+          break;
+        }
       }
     }
   }
