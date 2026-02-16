@@ -31,8 +31,8 @@ function Chart({ coin, timeframe, analysis, height = 550 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const widgetRef = useRef<string | null>(null);
 
-  // Build the TradingView symbol — Hyperliquid perps are listed on TradingView
-  const tvSymbol = `HYPERLIQUID:${coin}USD.P`;
+  // Hyperliquid isn't on TradingView as an exchange — use Bybit perps (same prices)
+  const tvSymbol = `BYBIT:${coin}USDT.P`;
   const tvInterval = TV_INTERVALS[timeframe] || '240';
 
   useEffect(() => {
