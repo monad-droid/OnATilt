@@ -3,14 +3,16 @@
 import { useState, useCallback } from 'react';
 import dynamic from 'next/dynamic';
 import { useAppStore } from '@/store';
-import CoinSelector from '@/components/CoinSelector';
 import ConnectWallet from '@/components/ConnectWallet';
 import SetupBuilder from '@/components/SetupBuilder';
 import TradePanel from '@/components/TradePanel';
 import AnalysisPanel from '@/components/AnalysisPanel';
+import type { Timeframe } from '@/types';
 
 // Dynamic import for chart (SSR incompatible — TradingView widget uses DOM)
 const Chart = dynamic(() => import('@/components/Chart'), { ssr: false });
+
+const TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '1d'];
 
 type Tab = 'chart' | 'setups' | 'trade';
 
@@ -20,23 +22,30 @@ export default function Home() {
     selectedTimeframe,
     analysis,
     setAnalysis,
+    setSelectedCoin,
+    setSelectedTimeframe,
   } = useAppStore();
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('chart');
+  const [analysisCoin, setAnalysisCoin] = useState(selectedCoin);
+  const [analysisTimeframe, setAnalysisTimeframe] = useState(selectedTimeframe);
 
   const loadAnalysis = useCallback(async () => {
     setLoading(true);
     setError(null);
 
     try {
+      setSelectedCoin(analysisCoin);
+      setSelectedTimeframe(analysisTimeframe);
+
       const res = await fetch('/api/analyze', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          coin: selectedCoin,
-          timeframe: selectedTimeframe,
+          coin: analysisCoin,
+          timeframe: analysisTimeframe,
         }),
       });
 
@@ -53,45 +62,21 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  }, [selectedCoin, selectedTimeframe, setAnalysis]);
+  }, [analysisCoin, analysisTimeframe, setAnalysis, setSelectedCoin, setSelectedTimeframe]);
 
   return (
     <div className="min-h-screen bg-[#0a0a0f]">
       {/* Header */}
-      <header className="border-b border-gray-800 px-6 py-4">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-between">
+      <header className="border-b border-gray-800 px-6 py-3">
+        <div className="max-w-[1800px] mx-auto flex items-center justify-between">
           <div className="flex items-center gap-4">
             <h1 className="text-xl font-bold text-white tracking-tight">
               <span className="text-red-400">On</span>ATilt
             </h1>
-            <span className="text-xs text-gray-600 hidden sm:block">Setup Validator</span>
           </div>
           <ConnectWallet />
         </div>
       </header>
-
-      {/* Controls */}
-      <div className="border-b border-gray-800 px-6 py-3">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-between gap-4 flex-wrap">
-          <CoinSelector />
-          <button
-            onClick={loadAnalysis}
-            disabled={loading}
-            className="px-6 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-600 transition-colors"
-          >
-            {loading ? 'Analyzing...' : 'Analyze'}
-          </button>
-        </div>
-      </div>
-
-      {/* Error */}
-      {error && (
-        <div className="max-w-[1600px] mx-auto px-6 pt-4">
-          <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm">
-            {error}
-          </div>
-        </div>
-      )}
 
       {/* Mobile Tabs */}
       <div className="lg:hidden border-b border-gray-800">
@@ -113,55 +98,87 @@ export default function Home() {
       </div>
 
       {/* Main Content */}
-      <main className="max-w-[1600px] mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
+      <main className="max-w-[1800px] mx-auto px-4 py-4">
+        <div className="grid grid-cols-1 lg:grid-cols-12 gap-4">
           {/* Chart Area */}
-          <div className={`lg:col-span-8 ${activeTab !== 'chart' ? 'hidden lg:block' : ''}`}>
-            <div className="border border-gray-800 rounded-xl overflow-hidden bg-[#0a0a0f]">
-              <Chart coin={selectedCoin} timeframe={selectedTimeframe} analysis={analysis} height={550} />
+          <div className={`lg:col-span-8 xl:col-span-9 ${activeTab !== 'chart' ? 'hidden lg:block' : ''}`}>
+            <div className="rounded-xl overflow-hidden bg-[#0a0a0f]">
+              <Chart analysis={analysis} height={600} />
             </div>
 
-            {/* Analysis Details (below chart on desktop) */}
-            <div className="hidden lg:block mt-6 border border-gray-800 rounded-xl p-5">
-              <h3 className="text-lg font-semibold text-white mb-4">Analysis</h3>
+            {/* Analysis bar below chart */}
+            <div className="mt-3 border border-gray-800 rounded-xl p-4">
+              {/* Analyze controls */}
+              <div className="flex items-center gap-3 flex-wrap mb-4">
+                <span className="text-xs text-gray-500">Analyze on Hyperliquid:</span>
+                <input
+                  type="text"
+                  value={analysisCoin}
+                  onChange={(e) => setAnalysisCoin(e.target.value.toUpperCase())}
+                  placeholder="BTC"
+                  className="w-20 bg-gray-900 border border-gray-700 rounded-lg px-2 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500 text-center"
+                />
+                <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
+                  {TIMEFRAMES.map((tf) => (
+                    <button
+                      key={tf}
+                      onClick={() => setAnalysisTimeframe(tf)}
+                      className={`px-2.5 py-1 rounded text-xs font-medium transition-colors ${
+                        analysisTimeframe === tf
+                          ? 'bg-blue-500 text-white'
+                          : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                      }`}
+                    >
+                      {tf}
+                    </button>
+                  ))}
+                </div>
+                <button
+                  onClick={loadAnalysis}
+                  disabled={loading}
+                  className="px-5 py-1.5 bg-blue-500 text-white rounded-lg text-sm font-medium disabled:opacity-50 hover:bg-blue-600 transition-colors"
+                >
+                  {loading ? 'Analyzing...' : 'Analyze'}
+                </button>
+              </div>
+
+              {/* Error */}
+              {error && (
+                <div className="bg-red-500/10 border border-red-500/30 rounded-lg p-3 text-red-400 text-sm mb-4">
+                  {error}
+                </div>
+              )}
+
+              {/* Analysis results */}
               <AnalysisPanel />
             </div>
           </div>
 
           {/* Right Sidebar */}
-          <div className="lg:col-span-4 space-y-6">
+          <div className="lg:col-span-4 xl:col-span-3 space-y-4">
             {/* Analysis (mobile only) */}
             <div className={`lg:hidden ${activeTab !== 'chart' ? 'hidden' : ''}`}>
-              <div className="border border-gray-800 rounded-xl p-5">
-                <h3 className="text-lg font-semibold text-white mb-4">Analysis</h3>
+              <div className="border border-gray-800 rounded-xl p-4">
                 <AnalysisPanel />
               </div>
             </div>
 
             {/* Setups */}
             <div className={`${activeTab !== 'setups' ? 'hidden lg:block' : ''}`}>
-              <div className="border border-gray-800 rounded-xl p-5">
+              <div className="border border-gray-800 rounded-xl p-4">
                 <SetupBuilder />
               </div>
             </div>
 
             {/* Trade Panel */}
             <div className={`${activeTab !== 'trade' ? 'hidden lg:block' : ''}`}>
-              <div className="border border-gray-800 rounded-xl p-5">
+              <div className="border border-gray-800 rounded-xl p-4">
                 <TradePanel />
               </div>
             </div>
           </div>
         </div>
       </main>
-
-      {/* Footer */}
-      <footer className="border-t border-gray-800 px-6 py-4 mt-8">
-        <div className="max-w-[1600px] mx-auto flex items-center justify-between text-xs text-gray-600">
-          <span>OnATilt - Trade only when your setup is valid</span>
-          <span>Hyperliquid Perps</span>
-        </div>
-      </footer>
     </div>
   );
 }

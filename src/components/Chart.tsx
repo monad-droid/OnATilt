@@ -1,50 +1,20 @@
 'use client';
 
 import { useEffect, useRef, memo } from 'react';
-import type { Timeframe, AnalysisResult } from '@/types';
+import type { AnalysisResult } from '@/types';
 
 interface ChartProps {
-  coin: string;
-  timeframe: Timeframe;
   analysis: AnalysisResult | null;
   height?: number;
 }
 
-// Map our timeframes to TradingView intervals
-const TV_INTERVALS: Record<Timeframe, string> = {
-  '1m': '1',
-  '3m': '3',
-  '5m': '5',
-  '15m': '15',
-  '30m': '30',
-  '1h': '60',
-  '2h': '120',
-  '4h': '240',
-  '8h': '480',
-  '12h': '720',
-  '1d': 'D',
-  '3d': '3D',
-  '1w': 'W',
-};
-
-function Chart({ coin, timeframe, analysis, height = 550 }: ChartProps) {
+function Chart({ analysis, height = 600 }: ChartProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const widgetRef = useRef<string | null>(null);
-
-  // Hyperliquid isn't on TradingView as an exchange — use Bybit perps (same prices)
-  const tvSymbol = `BYBIT:${coin}USDT.P`;
-  const tvInterval = TV_INTERVALS[timeframe] || '240';
+  const mountedRef = useRef(false);
 
   useEffect(() => {
-    if (!containerRef.current) return;
-
-    // Avoid re-creating if same symbol+interval
-    const widgetKey = `${tvSymbol}_${tvInterval}`;
-    if (widgetRef.current === widgetKey) return;
-    widgetRef.current = widgetKey;
-
-    // Clear previous widget
-    containerRef.current.innerHTML = '';
+    if (!containerRef.current || mountedRef.current) return;
+    mountedRef.current = true;
 
     const script = document.createElement('script');
     script.src = 'https://s3.tradingview.com/external-embedding/embed-widget-advanced-chart.js';
@@ -52,26 +22,19 @@ function Chart({ coin, timeframe, analysis, height = 550 }: ChartProps) {
     script.async = true;
     script.innerHTML = JSON.stringify({
       autosize: true,
-      symbol: tvSymbol,
-      interval: tvInterval,
+      symbol: 'BYBIT:BTCUSDT.P',
+      interval: '240',
       timezone: 'Etc/UTC',
       theme: 'dark',
-      style: '1', // Candlestick
+      style: '1',
       locale: 'en',
       backgroundColor: 'rgba(10, 10, 15, 1)',
       gridColor: 'rgba(31, 41, 55, 0.5)',
       allow_symbol_change: true,
       calendar: false,
       support_host: 'https://www.tradingview.com',
-      // Enable all drawing tools
       hide_side_toolbar: false,
-      // Show drawing toolbar
-      drawings_access: {
-        type: 'all',
-      },
-      // Enable volume by default
       studies: ['STD;Volume'],
-      // Toolbar settings
       withdateranges: true,
       hide_volume: false,
       save_image: true,
@@ -82,7 +45,7 @@ function Chart({ coin, timeframe, analysis, height = 550 }: ChartProps) {
 
     const widgetContainer = document.createElement('div');
     widgetContainer.className = 'tradingview-widget-container';
-    widgetContainer.style.height = `${height}px`;
+    widgetContainer.style.height = '100%';
     widgetContainer.style.width = '100%';
 
     const widgetInner = document.createElement('div');
@@ -93,7 +56,7 @@ function Chart({ coin, timeframe, analysis, height = 550 }: ChartProps) {
     widgetContainer.appendChild(widgetInner);
     widgetContainer.appendChild(script);
     containerRef.current.appendChild(widgetContainer);
-  }, [tvSymbol, tvInterval, height]);
+  }, []);
 
   return (
     <div className="relative">
