@@ -45,11 +45,20 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
     setToggles((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  // Track the visible range so toggles don't reset your scroll position
+  const savedRangeRef = useRef<{ from: number; to: number } | null>(null);
+
   useEffect(() => {
     if (!chartContainerRef.current) return;
 
-    // Dispose previous chart
+    // Save current visible range before disposing
     if (chartRef.current) {
+      try {
+        const vr = chartRef.current.timeScale().getVisibleRange();
+        if (vr) {
+          savedRangeRef.current = { from: vr.from as number, to: vr.to as number };
+        }
+      } catch { /* no range yet */ }
       chartRef.current.remove();
       chartRef.current = null;
     }
@@ -303,7 +312,15 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
       }
     });
 
-    chart.timeScale().fitContent();
+    // Restore previous scroll position, or fit content on first load
+    if (savedRangeRef.current) {
+      chart.timeScale().setVisibleRange({
+        from: savedRangeRef.current.from as UTCTimestamp,
+        to: savedRangeRef.current.to as UTCTimestamp,
+      });
+    } else {
+      chart.timeScale().fitContent();
+    }
 
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
