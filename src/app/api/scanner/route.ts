@@ -13,7 +13,7 @@ const CANDLE_LIMITS: Partial<Record<Timeframe, number>> = {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { coins, timeframe = '1w', recentCandles = 1 } = body as {
+    const { coins, timeframe = '1w', recentCandles = 2 } = body as {
       coins: string[];
       timeframe?: Timeframe;
       recentCandles?: number;

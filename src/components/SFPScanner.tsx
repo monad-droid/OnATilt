@@ -64,7 +64,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           const res = await fetch('/api/scanner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 1 }),
+            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 2 }),
           });
 
           const data = await res.json();
@@ -313,7 +313,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               Scan all Hyperliquid perps for {tfLabel}
             </p>
             <p className="text-gray-600 text-xs">
-              Detects tokens where the current candle sweeps a prior swing
+              Checks current + last completed candle for swing sweeps
             </p>
           </div>
         </div>
