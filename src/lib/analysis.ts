@@ -191,12 +191,19 @@ export function analyzeMarketStructure(candles: Candle[], swingStrength: number 
  * Bullish SFP: wick below a swing low, close above it
  * Bearish SFP: wick above a swing high, close below it
  */
-export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPercent: number = 0.0005): SFP[] {
+export function detectSFPs(
+  candles: Candle[],
+  swings: SwingPoint[],
+  minWickPercent: number = 0.0005,
+  maxSearchWindow: number = 80,
+): SFP[] {
   const sfps: SFP[] = [];
 
   for (const swing of swings) {
-    // Only look at candles after the swing formed
-    for (let i = swing.index + 1; i < candles.length; i++) {
+    const searchEnd = Math.min(swing.index + 1 + maxSearchWindow, candles.length);
+
+    // Only look at candles after the swing formed, within the search window
+    for (let i = swing.index + 1; i < searchEnd; i++) {
       const c = candles[i];
 
       if (swing.type === 'high') {
@@ -214,8 +221,6 @@ export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPerce
             break; // only count the first SFP per swing
           }
         }
-        // If price closed above, swing is broken — no SFP
-        if (c.close > swing.price) break;
       }
 
       if (swing.type === 'low') {
@@ -233,7 +238,6 @@ export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPerce
             break;
           }
         }
-        if (c.close < swing.price) break;
       }
     }
   }
