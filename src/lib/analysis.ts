@@ -242,109 +242,108 @@ export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPerce
 }
 
 // ============================================================
-// Range Detection
+// Range Detection — Dealing Range Approach
 // ============================================================
 
 /**
- * Identify horizontal ranges where price consolidates between
- * a swing high and swing low.
+ * Find the current dealing range: the nearest unbroken swing high
+ * above price and nearest unbroken swing low below price.
+ * This tells you "where am I trading right now?" rather than
+ * searching for historical consolidation zones.
+ *
+ * Also finds the previous dealing range (the one that was broken
+ * to get here) for context on the larger structure.
  */
 export function detectRanges(
   candles: Candle[],
   swings: SwingPoint[],
-  minCandlesInRange: number = 10
 ): Range[] {
-  const ranges: Range[] = [];
-  const swingHighs = swings.filter(s => s.type === 'high');
-  const swingLows = swings.filter(s => s.type === 'low');
+  if (swings.length < 2 || candles.length === 0) return [];
 
-  // Pair nearby swing highs and lows to form ranges
-  for (const sh of swingHighs) {
-    // Find the nearest swing low that forms a range with this high
-    const nearbyLows = swingLows.filter(sl => {
-      const distance = Math.abs(sl.index - sh.index);
-      return distance <= minCandlesInRange * 3 && distance >= 2;
+  const currentPrice = candles[candles.length - 1].close;
+  const ranges: Range[] = [];
+
+  // --- Current Dealing Range ---
+  // Nearest unbroken swing high above price (the ceiling)
+  const unbrokenhHighsAbove = swings
+    .filter(s => s.type === 'high' && !s.broken && s.price > currentPrice)
+    .sort((a, b) => a.price - b.price); // lowest first = nearest ceiling
+
+  // Nearest unbroken swing low below price (the floor)
+  const unbrokenLowsBelow = swings
+    .filter(s => s.type === 'low' && !s.broken && s.price < currentPrice)
+    .sort((a, b) => b.price - a.price); // highest first = nearest floor
+
+  if (unbrokenhHighsAbove.length > 0 && unbrokenLowsBelow.length > 0) {
+    const rangeHighSwing = unbrokenhHighsAbove[0];
+    const rangeLowSwing = unbrokenLowsBelow[0];
+    const rangeSize = rangeHighSwing.price - rangeLowSwing.price;
+
+    ranges.push({
+      high: rangeHighSwing.price,
+      low: rangeLowSwing.price,
+      highTime: rangeHighSwing.time,
+      lowTime: rangeLowSwing.time,
+      highIndex: rangeHighSwing.index,
+      lowIndex: rangeLowSwing.index,
+      equilibrium: (rangeHighSwing.price + rangeLowSwing.price) / 2,
+      premium: rangeLowSwing.price + rangeSize * 0.75,
+      discount: rangeLowSwing.price + rangeSize * 0.25,
+      broken: false,
     });
 
-    for (const sl of nearbyLows) {
-      const startIdx = Math.min(sh.index, sl.index);
-      const endIdx = Math.max(sh.index, sl.index);
+    // --- Previous Dealing Range (one level out) ---
+    // The next swing high above the current range high
+    const outerHigh = unbrokenhHighsAbove.find(s => s.price > rangeHighSwing.price);
+    // The next swing low below the current range low
+    const outerLow = unbrokenLowsBelow.find(s => s.price < rangeLowSwing.price);
 
-      // Check if price stayed mostly within the range
-      const rangeHigh = sh.price;
-      const rangeLow = sl.price;
-      const rangeSize = rangeHigh - rangeLow;
-      if (rangeSize <= 0) continue;
+    if (outerHigh && outerLow) {
+      const outerSize = outerHigh.price - outerLow.price;
+      ranges.push({
+        high: outerHigh.price,
+        low: outerLow.price,
+        highTime: outerHigh.time,
+        lowTime: outerLow.time,
+        highIndex: outerHigh.index,
+        lowIndex: outerLow.index,
+        equilibrium: (outerHigh.price + outerLow.price) / 2,
+        premium: outerLow.price + outerSize * 0.75,
+        discount: outerLow.price + outerSize * 0.25,
+        broken: false,
+      });
+    }
+  } else {
+    // Fallback: if price is above all swing highs or below all swing lows,
+    // use the two most recent swings to define the leg
+    const recentSwings = swings.slice(-10);
+    const recentHighs = recentSwings.filter(s => s.type === 'high').sort((a, b) => b.price - a.price);
+    const recentLows = recentSwings.filter(s => s.type === 'low').sort((a, b) => a.price - b.price);
 
-      let candlesInRange = 0;
-      for (let i = startIdx; i <= Math.min(endIdx + minCandlesInRange, candles.length - 1); i++) {
-        const tolerance = rangeSize * 0.1; // 10% tolerance
-        if (candles[i].high <= rangeHigh + tolerance && candles[i].low >= rangeLow - tolerance) {
-          candlesInRange++;
-        }
-      }
-
-      if (candlesInRange >= minCandlesInRange) {
-        const eq = (rangeHigh + rangeLow) / 2;
-        const range: Range = {
-          high: rangeHigh,
-          low: rangeLow,
+    if (recentHighs.length > 0 && recentLows.length > 0) {
+      const sh = recentHighs[0];
+      const sl = recentLows[0];
+      const rangeSize = sh.price - sl.price;
+      if (rangeSize > 0) {
+        const broken = currentPrice > sh.price || currentPrice < sl.price;
+        ranges.push({
+          high: sh.price,
+          low: sl.price,
           highTime: sh.time,
           lowTime: sl.time,
           highIndex: sh.index,
           lowIndex: sl.index,
-          equilibrium: eq,
-          premium: rangeLow + rangeSize * 0.75,
-          discount: rangeLow + rangeSize * 0.25,
-          broken: false,
-        };
-
-        // Check if range has been broken
-        const rangeEnd = Math.max(sh.index, sl.index);
-        for (let i = rangeEnd + 1; i < candles.length; i++) {
-          if (candles[i].close > rangeHigh) {
-            range.broken = true;
-            range.brokenDirection = 'above';
-            break;
-          }
-          if (candles[i].close < rangeLow) {
-            range.broken = true;
-            range.brokenDirection = 'below';
-            break;
-          }
-        }
-
-        ranges.push(range);
+          equilibrium: (sh.price + sl.price) / 2,
+          premium: sl.price + rangeSize * 0.75,
+          discount: sl.price + rangeSize * 0.25,
+          broken,
+          brokenDirection: currentPrice > sh.price ? 'above' : currentPrice < sl.price ? 'below' : undefined,
+        });
       }
     }
   }
 
-  // Deduplicate overlapping ranges — keep the widest
-  return deduplicateRanges(ranges);
-}
-
-function deduplicateRanges(ranges: Range[]): Range[] {
-  if (ranges.length <= 1) return ranges;
-
-  const sorted = [...ranges].sort((a, b) => (b.high - b.low) - (a.high - a.low));
-  const result: Range[] = [];
-
-  for (const range of sorted) {
-    const overlaps = result.some(existing => {
-      const overlapHigh = Math.min(existing.high, range.high);
-      const overlapLow = Math.max(existing.low, range.low);
-      if (overlapHigh <= overlapLow) return false;
-      const overlapSize = overlapHigh - overlapLow;
-      const smallerRange = Math.min(existing.high - existing.low, range.high - range.low);
-      return overlapSize / smallerRange > 0.5;
-    });
-
-    if (!overlaps) {
-      result.push(range);
-    }
-  }
-
-  return result;
+  return ranges;
 }
 
 // ============================================================

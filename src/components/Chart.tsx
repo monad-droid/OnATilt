@@ -171,25 +171,23 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
 
       createSeriesMarkers(candleSeries, deduped);
 
-      // --- Range Lines ---
-      const activeRanges = analysis.ranges.filter((r) => !r.broken);
-      // Only show ranges within 5% of current price to avoid zoom distortion
-      const nearRanges = activeRanges.filter((r) => {
-        const distHigh = Math.abs(r.high - currentPrice) / currentPrice;
-        const distLow = Math.abs(r.low - currentPrice) / currentPrice;
-        return distHigh < 0.05 || distLow < 0.05;
-      });
+      // --- Range Lines (dealing ranges) ---
+      // First range = current dealing range, second = outer range
+      const drawRanges = analysis.ranges.filter((r) => !r.broken);
 
-      for (const range of nearRanges.slice(0, 3)) {
+      for (let ri = 0; ri < drawRanges.length; ri++) {
+        const range = drawRanges[ri];
+        const isOuter = ri > 0;
+        const opacity = isOuter ? 0.3 : 0.6; // outer range is dimmer
         const startTime = toTime(Math.min(range.highTime, range.lowTime));
 
         // Range High line (red dashed)
         const highLine = chart.addSeries(LineSeries, {
-          color: 'rgba(239, 68, 68, 0.6)',
-          lineWidth: 1,
+          color: `rgba(239, 68, 68, ${opacity})`,
+          lineWidth: isOuter ? 1 : 2,
           lineStyle: 2,
           crosshairMarkerVisible: false,
-          lastValueVisible: true,
+          lastValueVisible: !isOuter,
           priceLineVisible: false,
           autoscaleInfoProvider: () => null,
         });
@@ -200,11 +198,11 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
 
         // Range Low line (green dashed)
         const lowLine = chart.addSeries(LineSeries, {
-          color: 'rgba(34, 197, 94, 0.6)',
-          lineWidth: 1,
+          color: `rgba(34, 197, 94, ${opacity})`,
+          lineWidth: isOuter ? 1 : 2,
           lineStyle: 2,
           crosshairMarkerVisible: false,
-          lastValueVisible: true,
+          lastValueVisible: !isOuter,
           priceLineVisible: false,
           autoscaleInfoProvider: () => null,
         });
@@ -215,7 +213,7 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
 
         // Equilibrium line (yellow dotted)
         const eqLine = chart.addSeries(LineSeries, {
-          color: 'rgba(234, 179, 8, 0.35)',
+          color: `rgba(234, 179, 8, ${isOuter ? 0.15 : 0.35})`,
           lineWidth: 1,
           lineStyle: 3,
           crosshairMarkerVisible: false,
