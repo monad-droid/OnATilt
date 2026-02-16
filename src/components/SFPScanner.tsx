@@ -64,7 +64,13 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           const res = await fetch('/api/scanner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 2 }),
+            body: JSON.stringify({
+              coins: batch,
+              timeframe,
+              // Weekly SFPs stay relevant longer — check last 3 candles
+              // Shorter TFs: check last 2 (current + last completed)
+              recentCandles: timeframe === '1w' ? 3 : 2,
+            }),
           });
 
           const data = await res.json();
