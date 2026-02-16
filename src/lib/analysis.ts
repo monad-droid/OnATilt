@@ -191,10 +191,29 @@ export function analyzeMarketStructure(candles: Candle[], swingStrength: number 
  * Bullish SFP: wick below a swing low, close above it
  * Bearish SFP: wick above a swing high, close below it
  */
-export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPercent: number = 0.0005): SFP[] {
+export function detectSFPs(
+  candles: Candle[],
+  swings: SwingPoint[],
+  minWickPercent: number = 0.0005,
+  maxAge: number = 500,
+  maxSwings: number = 20,
+): SFP[] {
   const sfps: SFP[] = [];
+  if (candles.length === 0) return sfps;
 
-  for (const swing of swings) {
+  const lastBarIndex = candles.length - 1;
+
+  // Filter swings: expire those older than maxAge bars, keep only the
+  // most recent maxSwings of each type (mirrors Pine Script storage cap)
+  const recentHighs = swings
+    .filter(s => s.type === 'high' && (lastBarIndex - s.index) <= maxAge)
+    .slice(-maxSwings);
+  const recentLows = swings
+    .filter(s => s.type === 'low' && (lastBarIndex - s.index) <= maxAge)
+    .slice(-maxSwings);
+  const filtered = [...recentHighs, ...recentLows].sort((a, b) => a.index - b.index);
+
+  for (const swing of filtered) {
     // Only look at candles after the swing formed
     for (let i = swing.index + 1; i < candles.length; i++) {
       const c = candles[i];
@@ -255,13 +274,15 @@ export function scanForSFPs(
   candles: Candle[],
   swingStrength: number = 3,
   recentCandles: number = 1, // how many recent candles to check for SFPs
+  maxAge: number = 500,
+  maxSwings: number = 20,
 ): { trend: Trend; sfps: SFP[]; currentPrice: number } {
   if (candles.length < swingStrength * 2 + 3) {
     return { trend: 'ranging', sfps: [], currentPrice: candles[candles.length - 1]?.close ?? 0 };
   }
 
   const ms = analyzeMarketStructure(candles, swingStrength);
-  const allSFPs = detectSFPs(candles, ms.swings);
+  const allSFPs = detectSFPs(candles, ms.swings, 0.0005, maxAge, maxSwings);
 
   // Filter to only SFPs where the sweep candle is in the last N candles
   const minIndex = candles.length - recentCandles;
@@ -302,11 +323,22 @@ export function debugSFPDetection(
   candles: Candle[],
   swingStrength: number = 3,
   minWickPercent: number = 0.0005,
+  maxAge: number = 500,
+  maxSwings: number = 20,
 ) {
   const ms = analyzeMarketStructure(candles, swingStrength);
   const traces: SwingTrace[] = [];
 
-  for (const swing of ms.swings) {
+  const lastBarIndex = candles.length - 1;
+  const recentHighs = ms.swings
+    .filter(s => s.type === 'high' && (lastBarIndex - s.index) <= maxAge)
+    .slice(-maxSwings);
+  const recentLows = ms.swings
+    .filter(s => s.type === 'low' && (lastBarIndex - s.index) <= maxAge)
+    .slice(-maxSwings);
+  const filteredSwings = [...recentHighs, ...recentLows].sort((a, b) => a.index - b.index);
+
+  for (const swing of filteredSwings) {
     const trace: SwingTrace = {
       type: swing.type,
       price: swing.price,
@@ -391,7 +423,7 @@ export function debugSFPDetection(
   }
 
   // Also run actual detection for comparison
-  const allSFPs = detectSFPs(candles, ms.swings, minWickPercent);
+  const allSFPs = detectSFPs(candles, ms.swings, minWickPercent, maxAge, maxSwings);
 
   return {
     totalCandles: candles.length,
@@ -704,10 +736,12 @@ export function runFullAnalysis(
   coin: string,
   timeframe: Timeframe,
   candles: Candle[],
-  swingStrength: number = 3
+  swingStrength: number = 3,
+  maxAge: number = 500,
+  maxSwings: number = 20,
 ): AnalysisResult {
   const marketStructure = analyzeMarketStructure(candles, swingStrength);
-  const sfps = detectSFPs(candles, marketStructure.swings);
+  const sfps = detectSFPs(candles, marketStructure.swings, 0.0005, maxAge, maxSwings);
   const ranges = detectRanges(candles, marketStructure.swings);
   const orderBlocks = detectOrderBlocks(candles);
   const fvgs = detectFVGs(candles);
