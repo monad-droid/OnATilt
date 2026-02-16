@@ -10,7 +10,8 @@ const SCAN_TIMEFRAMES: { value: Timeframe; label: string; desc: string }[] = [
   { value: '4h', label: '4H', desc: '4h SFPs' },
 ];
 
-const BATCH_SIZE = 10;
+const BATCH_SIZE = 5;
+const BATCH_DELAY_MS = 300; // delay between batches to avoid rate limits
 
 interface SFPScannerProps {
   onSelectCoin: (coin: string, timeframe: Timeframe) => void;
@@ -90,6 +91,11 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           total: allCoins.length,
           found: allResults.length,
         });
+
+        // Throttle to avoid Hyperliquid rate limits
+        if (i + BATCH_SIZE < allCoins.length) {
+          await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
+        }
       }
 
       setResults(allResults);

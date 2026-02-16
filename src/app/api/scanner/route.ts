@@ -44,8 +44,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'coins array required' }, { status: 400 });
     }
 
-    if (coins.length > 15) {
-      return NextResponse.json({ error: 'max 15 coins per batch' }, { status: 400 });
+    if (coins.length > 10) {
+      return NextResponse.json({ error: 'max 10 coins per batch' }, { status: 400 });
     }
 
     const limit = CANDLE_LIMITS[timeframe] ?? 100;

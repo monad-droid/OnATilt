@@ -62,34 +62,58 @@ export async function fetchCandles(
   const intervalMs = timeframeToMs(timeframe);
   const startTime = now - intervalMs * limit;
 
-  const response = await fetch('https://api.hyperliquid.xyz/info', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      type: 'candleSnapshot',
-      req: {
-        coin: coin.replace('-PERP', ''),
-        interval: timeframe,
-        startTime,
-        endTime: now,
-      },
-    }),
-  });
+  // Retry with exponential backoff for rate limits
+  const maxRetries = 3;
+  for (let attempt = 0; attempt <= maxRetries; attempt++) {
+    const response = await fetch('https://api.hyperliquid.xyz/info', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        type: 'candleSnapshot',
+        req: {
+          coin: coin.replace('-PERP', ''),
+          interval: timeframe,
+          startTime,
+          endTime: now,
+        },
+      }),
+    });
 
-  const data = await response.json();
+    // Rate limited — back off and retry
+    if (response.status === 429) {
+      if (attempt < maxRetries) {
+        await sleep(1000 * Math.pow(2, attempt)); // 1s, 2s, 4s
+        continue;
+      }
+      throw new Error(`Rate limited fetching ${coin} after ${maxRetries} retries`);
+    }
 
-  if (!Array.isArray(data)) {
-    throw new Error(`Unexpected candle response: ${JSON.stringify(data)}`);
+    const data = await response.json();
+
+    // Hyperliquid returns null when rate limited (even with 200 status)
+    if (data === null || data === undefined) {
+      if (attempt < maxRetries) {
+        await sleep(1000 * Math.pow(2, attempt));
+        continue;
+      }
+      throw new Error(`Null response for ${coin} after ${maxRetries} retries (likely rate limited)`);
+    }
+
+    if (!Array.isArray(data)) {
+      throw new Error(`Unexpected candle response for ${coin}: ${JSON.stringify(data).slice(0, 100)}`);
+    }
+
+    return data.map((c: { t: number; o: string; h: string; l: string; c: string; v: string }) => ({
+      time: c.t,
+      open: parseFloat(c.o),
+      high: parseFloat(c.h),
+      low: parseFloat(c.l),
+      close: parseFloat(c.c),
+      volume: parseFloat(c.v),
+    }));
   }
 
-  return data.map((c: { t: number; o: string; h: string; l: string; c: string; v: string }) => ({
-    time: c.t,
-    open: parseFloat(c.o),
-    high: parseFloat(c.h),
-    low: parseFloat(c.l),
-    close: parseFloat(c.c),
-    volume: parseFloat(c.v),
-  }));
+  throw new Error(`Failed to fetch candles for ${coin}`);
 }
 
 async function fetchMonthlyCandles(coin: string, limit: number): Promise<Candle[]> {
@@ -288,4 +312,8 @@ function timeframeToMs(tf: Timeframe): number {
     '1M': 30 * 86_400_000,
   };
   return map[tf];
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
 }
