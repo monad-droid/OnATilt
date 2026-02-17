@@ -1,0 +1,127 @@
+// This Pine Script(TM) indicator is subject to the terms of the Mozilla Public License 2.0
+// https://mozilla.org/MPL/2.0/
+// OnATilt - RSI Divergence with Neutral Zone Reset
+//@version=6
+indicator("RSI Divergence (Neutral Reset)", overlay=false)
+
+// ── Inputs ──────────────────────────────────────────────────────
+rsiLen        = input.int(14,  "RSI Length")
+pivotLookback = input.int(3,   "Pivot Lookback", minval=1, maxval=10)
+maxBars       = input.int(14,  "Max Bars Between Pivots", minval=5, maxval=50)
+neutralHi     = input.float(52.0, "Neutral Zone Upper")
+neutralLo     = input.float(48.0, "Neutral Zone Lower")
+
+// ── RSI ─────────────────────────────────────────────────────────
+rsi = ta.rsi(close, rsiLen)
+
+// ── Neutral zone detection ──────────────────────────────────────
+// A bar where RSI sits inside 48-52 resets any divergence in progress.
+// Divergences can only begin AFTER a neutral zone print.
+inNeutral = rsi >= neutralLo and rsi <= neutralHi
+
+// Track bars since last neutral zone visit
+var int barsSinceNeutral = 999
+if inNeutral
+    barsSinceNeutral := 0
+else
+    barsSinceNeutral += 1
+
+// Has RSI visited the neutral zone at some point? (global gate)
+var bool hasResetOnce = false
+if inNeutral
+    hasResetOnce := true
+
+// ── Pivot detection (on RSI) ────────────────────────────────────
+// Use ta.pivotlow / ta.pivothigh on RSI values
+rsiPivotLow  = ta.pivotlow(rsi,  pivotLookback, pivotLookback)
+rsiPivotHigh = ta.pivothigh(rsi, pivotLookback, pivotLookback)
+
+// Corresponding price at the pivot bar (shifted back by lookback)
+pricePivotLow  = ta.pivotlow(low,  pivotLookback, pivotLookback)
+pricePivotHigh = ta.pivothigh(high, pivotLookback, pivotLookback)
+
+// ── Track previous valid pivots ─────────────────────────────────
+// "Valid" = occurred after the most recent neutral zone reset.
+// We store the previous pivot's RSI value, price, and bar index
+// so we can compare when a new pivot forms.
+
+var float prevRsiLow     = na
+var float prevPriceLow   = na
+var int   prevLowBar     = na
+
+var float prevRsiHigh    = na
+var float prevPriceHigh  = na
+var int   prevHighBar    = na
+
+// The bar index where the pivot actually sits (lookback bars ago)
+pivotBarIndex = bar_index - pivotLookback
+
+// ── Neutral zone resets stored pivots ───────────────────────────
+if inNeutral
+    prevRsiLow   := na
+    prevPriceLow := na
+    prevLowBar   := na
+    prevRsiHigh  := na
+    prevPriceHigh := na
+    prevHighBar  := na
+
+// ── Bullish divergence: price lower low, RSI higher low ────────
+bullDiv = false
+if not na(rsiPivotLow) and hasResetOnce
+    // Current pivot must be AFTER a neutral reset (not during one)
+    if barsSinceNeutral > pivotLookback
+        if not na(prevRsiLow)
+            barsBetween = pivotBarIndex - prevLowBar
+            if barsBetween > 0 and barsBetween <= maxBars
+                // Price made a lower low but RSI made a higher low
+                if pricePivotLow < prevPriceLow and rsiPivotLow > prevRsiLow
+                    bullDiv := true
+
+        // Store this pivot as the new "previous" for next comparison
+        prevRsiLow   := rsiPivotLow
+        prevPriceLow := pricePivotLow
+        prevLowBar   := pivotBarIndex
+
+// ── Bearish divergence: price higher high, RSI lower high ──────
+bearDiv = false
+if not na(rsiPivotHigh) and hasResetOnce
+    if barsSinceNeutral > pivotLookback
+        if not na(prevRsiHigh)
+            barsBetween = pivotBarIndex - prevHighBar
+            if barsBetween > 0 and barsBetween <= maxBars
+                // Price made a higher high but RSI made a lower high
+                if pricePivotHigh > prevPriceHigh and rsiPivotHigh < prevRsiHigh
+                    bearDiv := true
+
+        prevRsiHigh  := rsiPivotHigh
+        prevPriceHigh := pricePivotHigh
+        prevHighBar  := pivotBarIndex
+
+// ── Plotting ────────────────────────────────────────────────────
+// RSI line
+rsiColor = rsi >= neutralLo and rsi <= neutralHi ? color.gray : rsi > 50 ? color.green : color.red
+plot(rsi, "RSI", rsiColor, 2)
+
+// Reference lines
+hline(70, "Overbought",  color.new(color.red, 70),   linestyle=hline.style_dotted)
+hline(50, "Midline",     color.new(color.gray, 80),   linestyle=hline.style_dotted)
+hline(30, "Oversold",    color.new(color.green, 70),  linestyle=hline.style_dotted)
+
+// Neutral zone band
+neutralUpper = plot(neutralHi, "Neutral Hi", color.new(color.gray, 90))
+neutralLower = plot(neutralLo, "Neutral Lo", color.new(color.gray, 90))
+fill(neutralUpper, neutralLower, color.new(color.yellow, 92), title="Neutral Zone")
+
+// Divergence signals — plotted on the RSI pane at the pivot location
+// (offset back by pivotLookback since that's where the pivot actually is)
+plotshape(bullDiv, "Bullish Div", shape.triangleup,   location.bottom, color.green, offset=-pivotLookback, size=size.small)
+plotshape(bearDiv, "Bearish Div", shape.triangledown,  location.top,   color.red,   offset=-pivotLookback, size=size.small)
+
+// ── Alerts ──────────────────────────────────────────────────────
+alertcondition(bullDiv, "Bullish RSI Divergence", "Bullish RSI divergence detected after neutral reset")
+alertcondition(bearDiv, "Bearish RSI Divergence", "Bearish RSI divergence detected after neutral reset")
+
+// ── Info label (last bar only) ──────────────────────────────────
+if barstate.islast
+    statusText = "Bars since neutral: " + str.tostring(barsSinceNeutral)
+    label.new(bar_index, rsi, statusText, style=label.style_label_left, color=color.new(color.gray, 80), textcolor=color.white, size=size.small)
