@@ -5,58 +5,76 @@
 indicator("RSI Divergence (Neutral Reset)", overlay=false, max_lines_count=500, max_labels_count=500)
 
 // ── Inputs ──────────────────────────────────────────────────────
-rsiLen    = input.int(14,  "RSI Length")
-window    = input.int(14,  "Divergence Window (bars)", minval=2, maxval=50)
-neutralHi = input.float(52.0, "Neutral Zone Upper")
-neutralLo = input.float(48.0, "Neutral Zone Lower")
-bullColor = input.color(color.green, "Bullish Color")
-bearColor = input.color(color.red,   "Bearish Color")
-lineWidth = input.int(2, "Line Width", minval=1, maxval=5)
+rsiLen        = input.int(14,  "RSI Length")
+pivotLookback = input.int(3,   "Pivot Lookback", minval=1, maxval=10)
+maxBars       = input.int(14,  "Max Bars Between Pivots", minval=5, maxval=50)
+neutralHi     = input.float(52.0, "Neutral Zone Upper")
+neutralLo     = input.float(48.0, "Neutral Zone Lower")
+bullColor     = input.color(color.green, "Bullish Color")
+bearColor     = input.color(color.red,   "Bearish Color")
+lineWidth     = input.int(2, "Line Width", minval=1, maxval=5)
 
 // ── RSI ─────────────────────────────────────────────────────────
 rsi = ta.rsi(close, rsiLen)
 inNeutral = rsi >= neutralLo and rsi <= neutralHi
 
-// ── Window tracking ─────────────────────────────────────────────
-// When RSI touches 48-52, start a new window. Store that bar's price & RSI.
-var int   winBar   = na
-var float winRsi   = na
-var float winClose = na
+// ── Price pivot detection ───────────────────────────────────────
+// Swing highs/lows on PRICE, then read RSI at that bar
+pricePivotLow  = ta.pivotlow(low,   pivotLookback, pivotLookback)
+pricePivotHigh = ta.pivothigh(high,  pivotLookback, pivotLookback)
+rsiAtPivot     = rsi[pivotLookback]
+pivotBarIdx    = bar_index - pivotLookback
+
+// ── Neutral zone reset tracking ─────────────────────────────────
+// If RSI touched 48-52 since the last stored pivot, any developing
+// divergence is cancelled. The flag resets when a new pivot is stored.
+var bool neutralSincePrevLow  = false
+var bool neutralSincePrevHigh = false
 
 if inNeutral
-    winBar   := bar_index
-    winRsi   := rsi
-    winClose := close
+    neutralSincePrevLow  := true
+    neutralSincePrevHigh := true
 
-// ── Divergence check at end of window ───────────────────────────
-winAge = na(winBar) ? 0 : bar_index - winBar
+// ── Previous pivot storage ──────────────────────────────────────
+var float prevPriceLow  = na
+var float prevRsiLow    = na
+var int   prevLowBar    = na
 
+var float prevPriceHigh = na
+var float prevRsiHigh   = na
+var int   prevHighBar   = na
+
+// ── Bullish divergence: price lower low, RSI higher low ────────
 bullDiv = false
+if not na(pricePivotLow)
+    if not na(prevPriceLow) and not neutralSincePrevLow
+        barsBetween = pivotBarIdx - prevLowBar
+        if barsBetween > 0 and barsBetween <= maxBars
+            if pricePivotLow < prevPriceLow and rsiAtPivot > prevRsiLow
+                bullDiv := true
+                line.new(prevLowBar, prevRsiLow, pivotBarIdx, rsiAtPivot, color=bullColor, width=lineWidth, style=line.style_solid)
+                label.new(pivotBarIdx, rsiAtPivot - 2, "BULL", color=color.new(bullColor, 20), textcolor=color.white, style=label.style_label_up, size=size.small)
+
+    prevPriceLow := pricePivotLow
+    prevRsiLow   := rsiAtPivot
+    prevLowBar   := pivotBarIdx
+    neutralSincePrevLow := false
+
+// ── Bearish divergence: price higher high, RSI lower high ──────
 bearDiv = false
+if not na(pricePivotHigh)
+    if not na(prevPriceHigh) and not neutralSincePrevHigh
+        barsBetween = pivotBarIdx - prevHighBar
+        if barsBetween > 0 and barsBetween <= maxBars
+            if pricePivotHigh > prevPriceHigh and rsiAtPivot < prevRsiHigh
+                bearDiv := true
+                line.new(prevHighBar, prevRsiHigh, pivotBarIdx, rsiAtPivot, color=bearColor, width=lineWidth, style=line.style_solid)
+                label.new(pivotBarIdx, rsiAtPivot + 2, "BEAR", color=color.new(bearColor, 20), textcolor=color.white, style=label.style_label_down, size=size.small)
 
-// Check every bar within the window. Draw once per window.
-var bool winDrawn = false
-
-if inNeutral
-    winDrawn := false
-
-if winAge > 0 and winAge <= window and not winDrawn
-    priceDelta = close - winClose
-    rsiDelta   = rsi - winRsi
-
-    if priceDelta < 0 and rsiDelta > 0
-        // Price down, RSI up → bullish divergence
-        bullDiv := true
-        winDrawn := true
-        line.new(winBar, winRsi, bar_index, rsi, color=bullColor, width=lineWidth, style=line.style_solid)
-        label.new(bar_index, rsi - 2, "BULL", color=color.new(bullColor, 20), textcolor=color.white, style=label.style_label_up, size=size.small)
-
-    if priceDelta > 0 and rsiDelta < 0
-        // Price up, RSI down → bearish divergence
-        bearDiv := true
-        winDrawn := true
-        line.new(winBar, winRsi, bar_index, rsi, color=bearColor, width=lineWidth, style=line.style_solid)
-        label.new(bar_index, rsi + 2, "BEAR", color=color.new(bearColor, 20), textcolor=color.white, style=label.style_label_down, size=size.small)
+    prevPriceHigh := pricePivotHigh
+    prevRsiHigh   := rsiAtPivot
+    prevHighBar   := pivotBarIdx
+    neutralSincePrevHigh := false
 
 // ── Plotting ────────────────────────────────────────────────────
 plot(rsi, "RSI", color.white, 2)
@@ -70,5 +88,5 @@ neutralLower = plot(neutralLo, "Neutral Lo", color.new(color.gray, 90))
 fill(neutralUpper, neutralLower, color.new(color.yellow, 92), title="Neutral Zone")
 
 // ── Alerts ──────────────────────────────────────────────────────
-alertcondition(bullDiv, "Bullish RSI Divergence", "Bullish RSI divergence detected after neutral reset")
-alertcondition(bearDiv, "Bearish RSI Divergence", "Bearish RSI divergence detected after neutral reset")
+alertcondition(bullDiv, "Bullish RSI Divergence", "Bullish RSI divergence detected")
+alertcondition(bearDiv, "Bearish RSI Divergence", "Bearish RSI divergence detected")
