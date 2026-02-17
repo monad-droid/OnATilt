@@ -191,12 +191,14 @@ export function analyzeMarketStructure(candles: Candle[], swingStrength: number 
  * Bullish SFP: wick below a swing low, close above it
  * Bearish SFP: wick above a swing high, close below it
  */
-export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPercent: number = 0.0005): SFP[] {
+export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPercent: number = 0.0005, swingStrength: number = 3): SFP[] {
   const sfps: SFP[] = [];
 
   for (const swing of swings) {
-    // Only look at candles after the swing formed
-    for (let i = swing.index + 1; i < candles.length; i++) {
+    // Start scanning from swing.index + swingStrength (the confirmation bar).
+    // In real-time (and in Pine Script), a swing isn't known until swingStrength
+    // bars later, so bars between swing and confirmation can't be checked.
+    for (let i = swing.index + swingStrength; i < candles.length; i++) {
       const c = candles[i];
 
       if (swing.type === 'high') {
@@ -261,7 +263,7 @@ export function scanForSFPs(
   }
 
   const ms = analyzeMarketStructure(candles, swingStrength);
-  const allSFPs = detectSFPs(candles, ms.swings);
+  const allSFPs = detectSFPs(candles, ms.swings, 0.0005, swingStrength);
 
   // Filter to only SFPs where the sweep candle is in the last N candles
   const minIndex = candles.length - recentCandles;
@@ -317,7 +319,7 @@ export function debugSFPDetection(
 
     let nearestDist = Infinity;
 
-    for (let i = swing.index + 1; i < candles.length; i++) {
+    for (let i = swing.index + swingStrength; i < candles.length; i++) {
       const c = candles[i];
       trace.candlesChecked++;
 
@@ -391,7 +393,7 @@ export function debugSFPDetection(
   }
 
   // Also run actual detection for comparison
-  const allSFPs = detectSFPs(candles, ms.swings, minWickPercent);
+  const allSFPs = detectSFPs(candles, ms.swings, minWickPercent, swingStrength);
 
   return {
     totalCandles: candles.length,
@@ -707,7 +709,7 @@ export function runFullAnalysis(
   swingStrength: number = 3
 ): AnalysisResult {
   const marketStructure = analyzeMarketStructure(candles, swingStrength);
-  const sfps = detectSFPs(candles, marketStructure.swings);
+  const sfps = detectSFPs(candles, marketStructure.swings, 0.0005, swingStrength);
   const ranges = detectRanges(candles, marketStructure.swings);
   const orderBlocks = detectOrderBlocks(candles);
   const fvgs = detectFVGs(candles);
