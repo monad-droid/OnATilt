@@ -34,19 +34,27 @@ winAge = na(winBar) ? 0 : bar_index - winBar
 bullDiv = false
 bearDiv = false
 
-if winAge == window
+// Check every bar within the window. Draw once per window.
+var bool winDrawn = false
+
+if inNeutral
+    winDrawn := false
+
+if winAge > 0 and winAge <= window and not winDrawn
     priceDelta = close - winClose
     rsiDelta   = rsi - winRsi
 
     if priceDelta < 0 and rsiDelta > 0
         // Price down, RSI up → bullish divergence
         bullDiv := true
+        winDrawn := true
         line.new(winBar, winRsi, bar_index, rsi, color=bullColor, width=lineWidth, style=line.style_solid)
         label.new(bar_index, rsi - 2, "BULL", color=color.new(bullColor, 20), textcolor=color.white, style=label.style_label_up, size=size.small)
 
     if priceDelta > 0 and rsiDelta < 0
         // Price up, RSI down → bearish divergence
         bearDiv := true
+        winDrawn := true
         line.new(winBar, winRsi, bar_index, rsi, color=bearColor, width=lineWidth, style=line.style_solid)
         label.new(bar_index, rsi + 2, "BEAR", color=color.new(bearColor, 20), textcolor=color.white, style=label.style_label_down, size=size.small)
 
