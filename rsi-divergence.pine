@@ -18,29 +18,26 @@ lineWidth     = input.int(2, "Divergence Line Width", minval=1, maxval=5)
 rsi = ta.rsi(close, rsiLen)
 
 // ── Neutral zone detection ──────────────────────────────────────
-// A bar where RSI sits inside 48-52 resets any divergence in progress.
-// Divergences can only begin AFTER a neutral zone print.
 inNeutral = rsi >= neutralLo and rsi <= neutralHi
 
-// Track bars since last neutral zone visit
 var int barsSinceNeutral = 999
 if inNeutral
     barsSinceNeutral := 0
 else
     barsSinceNeutral += 1
 
-// Has RSI visited the neutral zone at some point? (global gate)
 var bool hasResetOnce = false
 if inNeutral
     hasResetOnce := true
 
-// ── Pivot detection (on RSI) ────────────────────────────────────
+// ── Pivot detection (RSI only) ──────────────────────────────────
+// Detect pivots on RSI, then read price at that same bar
 rsiPivotLow  = ta.pivotlow(rsi,  pivotLookback, pivotLookback)
 rsiPivotHigh = ta.pivothigh(rsi, pivotLookback, pivotLookback)
 
-// Corresponding price at the pivot bar (shifted back by lookback)
-pricePivotLow  = ta.pivotlow(low,  pivotLookback, pivotLookback)
-pricePivotHigh = ta.pivothigh(high, pivotLookback, pivotLookback)
+// Price at the pivot bar (lookback bars ago)
+priceLowAtPivot  = low[pivotLookback]
+priceHighAtPivot = high[pivotLookback]
 
 // ── Track previous valid pivots ─────────────────────────────────
 var float prevRsiLow     = na
@@ -51,17 +48,16 @@ var float prevRsiHigh    = na
 var float prevPriceHigh  = na
 var int   prevHighBar    = na
 
-// The bar index where the pivot actually sits (lookback bars ago)
 pivotBarIndex = bar_index - pivotLookback
 
 // ── Neutral zone resets stored pivots ───────────────────────────
 if inNeutral
-    prevRsiLow   := na
-    prevPriceLow := na
-    prevLowBar   := na
-    prevRsiHigh  := na
+    prevRsiLow    := na
+    prevPriceLow  := na
+    prevLowBar    := na
+    prevRsiHigh   := na
     prevPriceHigh := na
-    prevHighBar  := na
+    prevHighBar   := na
 
 // ── Bullish divergence: price lower low, RSI higher low ────────
 bullDiv = false
@@ -70,17 +66,13 @@ if not na(rsiPivotLow) and hasResetOnce
         if not na(prevRsiLow)
             barsBetween = pivotBarIndex - prevLowBar
             if barsBetween > 0 and barsBetween <= maxBars
-                if pricePivotLow < prevPriceLow and rsiPivotLow > prevRsiLow
+                if priceLowAtPivot < prevPriceLow and rsiPivotLow > prevRsiLow
                     bullDiv := true
-                    // Draw trendline connecting the two RSI lows
                     line.new(prevLowBar, prevRsiLow, pivotBarIndex, rsiPivotLow, color=bullColor, width=lineWidth, style=line.style_solid)
-                    // Label at the midpoint
-                    midBar = math.round((prevLowBar + pivotBarIndex) / 2)
-                    midRsi = (prevRsiLow + rsiPivotLow) / 2
-                    label.new(midBar, midRsi - 3, "BULL", color=color.new(bullColor, 20), textcolor=color.white, style=label.style_label_up, size=size.small)
+                    label.new(pivotBarIndex, rsiPivotLow - 2, "BULL", color=color.new(bullColor, 20), textcolor=color.white, style=label.style_label_up, size=size.small)
 
         prevRsiLow   := rsiPivotLow
-        prevPriceLow := pricePivotLow
+        prevPriceLow := priceLowAtPivot
         prevLowBar   := pivotBarIndex
 
 // ── Bearish divergence: price higher high, RSI lower high ──────
@@ -90,30 +82,23 @@ if not na(rsiPivotHigh) and hasResetOnce
         if not na(prevRsiHigh)
             barsBetween = pivotBarIndex - prevHighBar
             if barsBetween > 0 and barsBetween <= maxBars
-                if pricePivotHigh > prevPriceHigh and rsiPivotHigh < prevRsiHigh
+                if priceHighAtPivot > prevPriceHigh and rsiPivotHigh < prevRsiHigh
                     bearDiv := true
-                    // Draw trendline connecting the two RSI highs
                     line.new(prevHighBar, prevRsiHigh, pivotBarIndex, rsiPivotHigh, color=bearColor, width=lineWidth, style=line.style_solid)
-                    // Label at the midpoint
-                    midBar = math.round((prevHighBar + pivotBarIndex) / 2)
-                    midRsi = (prevRsiHigh + rsiPivotHigh) / 2
-                    label.new(midBar, midRsi + 3, "BEAR", color=color.new(bearColor, 20), textcolor=color.white, style=label.style_label_down, size=size.small)
+                    label.new(pivotBarIndex, rsiPivotHigh + 2, "BEAR", color=color.new(bearColor, 20), textcolor=color.white, style=label.style_label_down, size=size.small)
 
-        prevRsiHigh  := rsiPivotHigh
-        prevPriceHigh := pricePivotHigh
-        prevHighBar  := pivotBarIndex
+        prevRsiHigh   := rsiPivotHigh
+        prevPriceHigh := priceHighAtPivot
+        prevHighBar   := pivotBarIndex
 
 // ── Plotting ────────────────────────────────────────────────────
-// RSI line
-rsiColor = rsi >= neutralLo and rsi <= neutralHi ? color.gray : rsi > 50 ? color.green : color.red
+rsiColor = inNeutral ? color.gray : rsi > 50 ? color.green : color.red
 plot(rsi, "RSI", rsiColor, 2)
 
-// Reference lines
 hline(70, "Overbought",  color.new(color.red, 70),   linestyle=hline.style_dotted)
 hline(50, "Midline",     color.new(color.gray, 80),   linestyle=hline.style_dotted)
 hline(30, "Oversold",    color.new(color.green, 70),  linestyle=hline.style_dotted)
 
-// Neutral zone band
 neutralUpper = plot(neutralHi, "Neutral Hi", color.new(color.gray, 90))
 neutralLower = plot(neutralLo, "Neutral Lo", color.new(color.gray, 90))
 fill(neutralUpper, neutralLower, color.new(color.yellow, 92), title="Neutral Zone")
