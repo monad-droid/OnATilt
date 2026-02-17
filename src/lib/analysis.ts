@@ -191,10 +191,19 @@ export function analyzeMarketStructure(candles: Candle[], swingStrength: number 
  * Bullish SFP: wick below a swing low, close above it
  * Bearish SFP: wick above a swing high, close below it
  */
+// Pine Script only stores the N most recent swings per type (maxSwings = 20).
+// Older swings are dropped and can never produce SFPs. Mirror that here.
+const MAX_SWINGS_PER_TYPE = 20;
+
 export function detectSFPs(candles: Candle[], swings: SwingPoint[], minWickPercent: number = 0.0005, swingStrength: number = 3): SFP[] {
   const sfps: SFP[] = [];
 
-  for (const swing of swings) {
+  // Keep only the most recent MAX_SWINGS_PER_TYPE of each type to match Pine
+  const highs = swings.filter(s => s.type === 'high').slice(-MAX_SWINGS_PER_TYPE);
+  const lows = swings.filter(s => s.type === 'low').slice(-MAX_SWINGS_PER_TYPE);
+  const limitedSwings = [...highs, ...lows].sort((a, b) => a.index - b.index);
+
+  for (const swing of limitedSwings) {
     // Start scanning from swing.index + swingStrength (the confirmation bar).
     // In real-time (and in Pine Script), a swing isn't known until swingStrength
     // bars later, so bars between swing and confirmation can't be checked.
@@ -308,7 +317,12 @@ export function debugSFPDetection(
   const ms = analyzeMarketStructure(candles, swingStrength);
   const traces: SwingTrace[] = [];
 
-  for (const swing of ms.swings) {
+  // Apply same MAX_SWINGS_PER_TYPE limit as detectSFPs / Pine Script
+  const highs = ms.swings.filter(s => s.type === 'high').slice(-MAX_SWINGS_PER_TYPE);
+  const lows = ms.swings.filter(s => s.type === 'low').slice(-MAX_SWINGS_PER_TYPE);
+  const limitedSwings = [...highs, ...lows].sort((a, b) => a.index - b.index);
+
+  for (const swing of limitedSwings) {
     const trace: SwingTrace = {
       type: swing.type,
       price: swing.price,
