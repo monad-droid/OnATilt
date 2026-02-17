@@ -13,7 +13,7 @@ const SCAN_TIMEFRAMES: { value: Timeframe; label: string; desc: string }[] = [
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 300; // delay between batches to avoid rate limits
 
-type SortField = 'default' | 'mcap' | 'wick' | 'trend';
+type SortField = 'default' | 'mcap' | 'wick' | 'trend' | 'when';
 type SortDirection = 'asc' | 'desc';
 
 interface SFPScannerProps {
@@ -93,7 +93,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           const res = await fetch('/api/scanner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 2 }),
+            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 4 }),
           });
 
           const data = await res.json();
@@ -188,6 +188,11 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
         const aWick = a.sfps[0] ? (a.sfps[0].wickDepth / a.sfps[0].sweptSwing.price) * 100 : 0;
         const bWick = b.sfps[0] ? (b.sfps[0].wickDepth / b.sfps[0].sweptSwing.price) * 100 : 0;
         return (aWick - bWick) * dir;
+      }
+      case 'when': {
+        const aOffset = a.sfps[0] ? a.totalCandles - 1 - a.sfps[0].sweepCandleIndex : 999;
+        const bOffset = b.sfps[0] ? b.totalCandles - 1 - b.sfps[0].sweepCandleIndex : 999;
+        return (aOffset - bOffset) * dir;
       }
       case 'trend': {
         const trendOrder: Record<string, number> = { bullish: 0, ranging: 1, bearish: 2 };
@@ -372,7 +377,12 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               <tr className="text-gray-500 text-xs border-b border-gray-800">
                 <th className="text-left py-2 px-2 font-medium">Token</th>
                 <th className="text-left py-2 px-2 font-medium">Type</th>
-                <th className="text-left py-2 px-2 font-medium">When</th>
+                <th
+                  className="text-left py-2 px-2 font-medium cursor-pointer hover:text-white select-none transition-colors"
+                  onClick={() => handleSort('when')}
+                >
+                  When {sortBy === 'when' ? (sortDirection === 'desc' ? '\u25BC' : '\u25B2') : ''}
+                </th>
                 <th className="text-right py-2 px-2 font-medium">Price</th>
                 <th
                   className="text-right py-2 px-2 font-medium cursor-pointer hover:text-white select-none transition-colors"
@@ -401,7 +411,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
                   const wickPct = ((sfp.wickDepth / sfp.sweptSwing.price) * 100).toFixed(2);
                   const isBullish = sfp.type === 'bullish';
                   const candlesFromEnd = r.totalCandles - 1 - sfp.sweepCandleIndex;
-                  const whenLabel = candlesFromEnd === 0 ? 'This' : 'Last';
+                  const whenLabel = candlesFromEnd === 0 ? 'This' : `+${candlesFromEnd}`;
 
                   return (
                     <tr
@@ -422,7 +432,12 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
                         </span>
                       </td>
                       <td className="py-2.5 px-2">
-                        <span className={`text-xs ${candlesFromEnd === 0 ? 'text-yellow-400' : 'text-gray-500'}`}>
+                        <span className={`text-xs ${
+                          candlesFromEnd === 0 ? 'text-yellow-400' :
+                          candlesFromEnd === 1 ? 'text-yellow-400/70' :
+                          candlesFromEnd === 2 ? 'text-gray-400' :
+                          'text-gray-500'
+                        }`}>
                           {whenLabel}
                         </span>
                       </td>
@@ -471,7 +486,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               Scan all Hyperliquid perps for {tfLabel}
             </p>
             <p className="text-gray-600 text-xs">
-              Checks current + last completed candle for swing sweeps
+              Checks current candle + last 3 completed candles for swing sweeps
             </p>
           </div>
         </div>
