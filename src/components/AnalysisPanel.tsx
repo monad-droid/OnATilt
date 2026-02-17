@@ -55,9 +55,9 @@ export default function AnalysisPanel() {
           )}
 
           <div className="text-xs text-gray-500 mt-1">
-            Recent: {recentStructure.map(sp => (
+            Recent: {recentStructure.map((sp, i) => (
               <span
-                key={sp.swing.index}
+                key={`${sp.swing.index}-${i}`}
                 className={`mr-1 ${
                   sp.breakType === 'BOS' ? 'text-blue-400' :
                   sp.breakType === 'CHoCH' ? 'text-yellow-400' :
