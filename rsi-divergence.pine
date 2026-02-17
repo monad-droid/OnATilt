@@ -92,11 +92,10 @@ if not na(rsiPivotHigh) and hasResetOnce
         prevHighBar   := pivotBarIndex
 
 // ── Plotting ────────────────────────────────────────────────────
-rsiColor = inNeutral ? color.gray : rsi > 50 ? color.green : color.red
-plot(rsi, "RSI", rsiColor, 2)
+plot(rsi, "RSI", color.white, 2)
 
 hline(70, "Overbought",  color.new(color.red, 70),   linestyle=hline.style_dotted)
-hline(50, "Midline",     color.new(color.gray, 80),   linestyle=hline.style_dotted)
+hline(50, "Midline",     color.white,                  linestyle=hline.style_solid)
 hline(30, "Oversold",    color.new(color.green, 70),  linestyle=hline.style_dotted)
 
 neutralUpper = plot(neutralHi, "Neutral Hi", color.new(color.gray, 90))
