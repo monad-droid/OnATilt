@@ -38,6 +38,9 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [filter, setFilter] = useState<'all' | 'bullish' | 'bearish'>('all');
   const cancelRef = useRef(false);
 
+  const [allCoins, setAllCoins] = useState<string[]>([]);
+  const [showAllCoins, setShowAllCoins] = useState(false);
+
   // Debug state
   const [showDebug, setShowDebug] = useState(false);
   const [debugCoin, setDebugCoin] = useState('');
@@ -67,15 +70,16 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
         return;
       }
 
-      const allCoins: string[] = assetsData.assets.map((a: { name: string }) => a.name);
-      setProgress({ scanned: 0, total: allCoins.length, found: 0 });
+      const coins: string[] = assetsData.assets.map((a: { name: string }) => a.name);
+      setAllCoins(coins);
+      setProgress({ scanned: 0, total: coins.length, found: 0 });
 
       const allResults: ScannerResult[] = [];
 
-      for (let i = 0; i < allCoins.length; i += BATCH_SIZE) {
+      for (let i = 0; i < coins.length; i += BATCH_SIZE) {
         if (cancelRef.current) break;
 
-        const batch = allCoins.slice(i, i + BATCH_SIZE);
+        const batch = coins.slice(i, i + BATCH_SIZE);
 
         try {
           const res = await fetch('/api/scanner', {
@@ -95,13 +99,13 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
         }
 
         setProgress({
-          scanned: Math.min(i + BATCH_SIZE, allCoins.length),
-          total: allCoins.length,
+          scanned: Math.min(i + BATCH_SIZE, coins.length),
+          total: coins.length,
           found: allResults.length,
         });
 
         // Throttle to avoid Hyperliquid rate limits
-        if (i + BATCH_SIZE < allCoins.length) {
+        if (i + BATCH_SIZE < coins.length) {
           await new Promise(r => setTimeout(r, BATCH_DELAY_MS));
         }
       }
@@ -331,6 +335,42 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
             </div>
             <div className="text-xs text-gray-500">Bearish</div>
           </div>
+        </div>
+      )}
+
+      {/* All scanned tokens (collapsible) */}
+      {hasScanned && allCoins.length > 0 && (
+        <div className="mb-4">
+          <button
+            onClick={() => setShowAllCoins(!showAllCoins)}
+            className="flex items-center gap-2 text-xs text-gray-500 hover:text-gray-300 transition-colors w-full"
+          >
+            <span className="transition-transform" style={{ transform: showAllCoins ? 'rotate(90deg)' : 'rotate(0deg)' }}>
+              &#x25B6;
+            </span>
+            {allCoins.length} tokens scanned
+          </button>
+          {showAllCoins && (
+            <div className="mt-2 bg-gray-900 rounded-lg p-3 max-h-48 overflow-auto">
+              <div className="flex flex-wrap gap-1.5">
+                {allCoins.map((coin) => {
+                  const hasSFP = results.some((r) => r.coin === coin);
+                  return (
+                    <span
+                      key={coin}
+                      className={`px-2 py-0.5 rounded text-xs font-mono ${
+                        hasSFP
+                          ? 'bg-blue-500/20 text-blue-400'
+                          : 'bg-gray-800 text-gray-600'
+                      }`}
+                    >
+                      {coin}
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
