@@ -187,6 +187,7 @@ export interface ScannerResult {
   sfps: SFP[];              // SFPs found on the scanned candle(s)
   totalCandles: number;      // total candles fetched (for "when" calculation)
   scannedAt: number;         // timestamp
+  marketCap?: number;        // market cap in USD (from CoinGecko)
 }
 
 export interface ScannerProgress {

@@ -13,6 +13,9 @@ const SCAN_TIMEFRAMES: { value: Timeframe; label: string; desc: string }[] = [
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 300; // delay between batches to avoid rate limits
 
+type SortField = 'default' | 'mcap' | 'wick' | 'trend';
+type SortDirection = 'asc' | 'desc';
+
 interface SFPScannerProps {
   onSelectCoin: (coin: string, timeframe: Timeframe) => void;
 }
@@ -28,7 +31,10 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [error, setError] = useState<string | null>(null);
   const [hasScanned, setHasScanned] = useState(false);
   const [filter, setFilter] = useState<'all' | 'bullish' | 'bearish'>('all');
+  const [sortBy, setSortBy] = useState<SortField>('default');
+  const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
   const cancelRef = useRef(false);
+  const marketCapsRef = useRef<Record<string, number>>({});
 
   // Debug state
   const [showDebug, setShowDebug] = useState(false);
@@ -46,17 +52,31 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     setProgress({ scanned: 0, total: 0, found: 0 });
 
     try {
-      const assetsRes = await fetch('/api/market-data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'assets' }),
-      });
+      // Fetch assets and market caps in parallel
+      const [assetsRes, mcapRes] = await Promise.all([
+        fetch('/api/market-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'assets' }),
+        }),
+        fetch('/api/market-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'marketCaps' }),
+        }).catch(() => null), // Market caps are optional — don't block scan
+      ]);
 
       const assetsData = await assetsRes.json();
       if (assetsData.error) {
         setError(assetsData.error);
         setScanning(false);
         return;
+      }
+
+      // Store market caps for augmenting results
+      if (mcapRes && mcapRes.ok) {
+        const mcapData = await mcapRes.json();
+        marketCapsRef.current = mcapData.marketCaps ?? {};
       }
 
       const allCoins: string[] = assetsData.assets.map((a: { name: string }) => a.name);
@@ -79,7 +99,11 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           const data = await res.json();
 
           if (data.results) {
-            allResults.push(...data.results);
+            const augmented = data.results.map((r: ScannerResult) => ({
+              ...r,
+              marketCap: marketCapsRef.current[r.coin] ?? undefined,
+            }));
+            allResults.push(...augmented);
             setResults([...allResults]);
           }
         } catch {
@@ -142,13 +166,45 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     return r.sfps.some((sfp) => sfp.type === filter);
   });
 
+  const handleSort = useCallback((field: SortField) => {
+    if (sortBy === field) {
+      setSortDirection(d => d === 'desc' ? 'asc' : 'desc');
+    } else {
+      setSortBy(field);
+      setSortDirection('desc');
+    }
+  }, [sortBy]);
+
   const sortedResults = [...filteredResults].sort((a, b) => {
-    const aType = a.sfps[0]?.type === 'bearish' ? 0 : 1;
-    const bType = b.sfps[0]?.type === 'bearish' ? 0 : 1;
-    if (aType !== bType) return aType - bType;
-    const aWick = a.sfps[0] ? (a.sfps[0].wickDepth / a.sfps[0].sweptSwing.price) * 100 : 0;
-    const bWick = b.sfps[0] ? (b.sfps[0].wickDepth / b.sfps[0].sweptSwing.price) * 100 : 0;
-    return bWick - aWick;
+    const dir = sortDirection === 'desc' ? -1 : 1;
+
+    switch (sortBy) {
+      case 'mcap': {
+        const aMcap = a.marketCap ?? 0;
+        const bMcap = b.marketCap ?? 0;
+        return (aMcap - bMcap) * dir;
+      }
+      case 'wick': {
+        const aWick = a.sfps[0] ? (a.sfps[0].wickDepth / a.sfps[0].sweptSwing.price) * 100 : 0;
+        const bWick = b.sfps[0] ? (b.sfps[0].wickDepth / b.sfps[0].sweptSwing.price) * 100 : 0;
+        return (aWick - bWick) * dir;
+      }
+      case 'trend': {
+        const trendOrder: Record<string, number> = { bullish: 0, ranging: 1, bearish: 2 };
+        const aTrend = trendOrder[a.trend] ?? 1;
+        const bTrend = trendOrder[b.trend] ?? 1;
+        return (aTrend - bTrend) * dir;
+      }
+      default: {
+        // Original sort: type first, then wick% desc
+        const aType = a.sfps[0]?.type === 'bearish' ? 0 : 1;
+        const bType = b.sfps[0]?.type === 'bearish' ? 0 : 1;
+        if (aType !== bType) return aType - bType;
+        const aWick = a.sfps[0] ? (a.sfps[0].wickDepth / a.sfps[0].sweptSwing.price) * 100 : 0;
+        const bWick = b.sfps[0] ? (b.sfps[0].wickDepth / b.sfps[0].sweptSwing.price) * 100 : 0;
+        return bWick - aWick;
+      }
+    }
   });
 
   const progressPercent = progress.total > 0 ? (progress.scanned / progress.total) * 100 : 0;
@@ -318,9 +374,25 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
                 <th className="text-left py-2 px-2 font-medium">Type</th>
                 <th className="text-left py-2 px-2 font-medium">When</th>
                 <th className="text-right py-2 px-2 font-medium">Price</th>
+                <th
+                  className="text-right py-2 px-2 font-medium cursor-pointer hover:text-white select-none transition-colors"
+                  onClick={() => handleSort('mcap')}
+                >
+                  MCap {sortBy === 'mcap' ? (sortDirection === 'desc' ? '\u25BC' : '\u25B2') : ''}
+                </th>
                 <th className="text-right py-2 px-2 font-medium">Swept</th>
-                <th className="text-right py-2 px-2 font-medium">Wick%</th>
-                <th className="text-left py-2 px-2 font-medium">Trend</th>
+                <th
+                  className="text-right py-2 px-2 font-medium cursor-pointer hover:text-white select-none transition-colors"
+                  onClick={() => handleSort('wick')}
+                >
+                  Wick% {sortBy === 'wick' ? (sortDirection === 'desc' ? '\u25BC' : '\u25B2') : ''}
+                </th>
+                <th
+                  className="text-left py-2 px-2 font-medium cursor-pointer hover:text-white select-none transition-colors"
+                  onClick={() => handleSort('trend')}
+                >
+                  Trend {sortBy === 'trend' ? (sortDirection === 'desc' ? '\u25BC' : '\u25B2') : ''}
+                </th>
               </tr>
             </thead>
             <tbody>
@@ -356,6 +428,9 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
                       </td>
                       <td className="py-2.5 px-2 text-right text-white font-mono text-xs">
                         {formatPrice(r.currentPrice)}
+                      </td>
+                      <td className="py-2.5 px-2 text-right text-gray-400 font-mono text-xs">
+                        {formatMarketCap(r.marketCap)}
                       </td>
                       <td className="py-2.5 px-2 text-right text-gray-400 font-mono text-xs">
                         {formatPrice(sfp.sweptSwing.price)}
@@ -557,4 +632,12 @@ function formatPrice(price: number): string {
   if (price >= 1) return price.toFixed(4);
   if (price >= 0.001) return price.toFixed(6);
   return price.toPrecision(4);
+}
+
+function formatMarketCap(mcap: number | undefined): string {
+  if (!mcap) return '\u2014';
+  if (mcap >= 1_000_000_000) return `$${(mcap / 1_000_000_000).toFixed(1)}B`;
+  if (mcap >= 1_000_000) return `$${(mcap / 1_000_000).toFixed(0)}M`;
+  if (mcap >= 1_000) return `$${(mcap / 1_000).toFixed(0)}K`;
+  return `$${mcap.toFixed(0)}`;
 }

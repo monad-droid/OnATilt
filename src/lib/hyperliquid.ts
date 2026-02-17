@@ -291,6 +291,54 @@ export async function cancelOrder(coin: string, orderId: number): Promise<{ succ
 }
 
 // ============================================================
+// Market Cap Data (CoinGecko)
+// ============================================================
+
+let marketCapCache: { data: Record<string, number>; timestamp: number } | null = null;
+const MARKET_CAP_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Fetch market cap data from CoinGecko for the top ~1000 coins.
+ * Returns a map of uppercase symbol -> market cap in USD.
+ * Results are cached for 5 minutes.
+ */
+export async function fetchMarketCaps(): Promise<Record<string, number>> {
+  if (marketCapCache && Date.now() - marketCapCache.timestamp < MARKET_CAP_CACHE_TTL) {
+    return marketCapCache.data;
+  }
+
+  const caps: Record<string, number> = {};
+
+  for (let page = 1; page <= 4; page++) {
+    try {
+      const res = await fetch(
+        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}`
+      );
+
+      if (!res.ok) break;
+
+      const data = await res.json();
+      if (!Array.isArray(data)) break;
+
+      for (const coin of data) {
+        if (coin.symbol && coin.market_cap) {
+          // Use uppercase symbol as key to match Hyperliquid naming
+          caps[coin.symbol.toUpperCase()] = coin.market_cap;
+        }
+      }
+    } catch {
+      break; // Stop on failure, return what we have
+    }
+
+    // Small delay between pages to respect rate limits
+    if (page < 4) await sleep(500);
+  }
+
+  marketCapCache = { data: caps, timestamp: Date.now() };
+  return caps;
+}
+
+// ============================================================
 // Helpers
 // ============================================================
 

@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchCandles, fetchAllMids, fetchAssets, fetchOrderbook } from '@/lib/hyperliquid';
+import { fetchCandles, fetchAllMids, fetchAssets, fetchOrderbook, fetchMarketCaps } from '@/lib/hyperliquid';
 import type { Timeframe } from '@/types';
 
 export async function POST(request: NextRequest) {
@@ -34,6 +34,11 @@ export async function POST(request: NextRequest) {
         }
         const orderbook = await fetchOrderbook(coin);
         return NextResponse.json({ orderbook });
+      }
+
+      case 'marketCaps': {
+        const marketCaps = await fetchMarketCaps();
+        return NextResponse.json({ marketCaps });
       }
 
       default:
