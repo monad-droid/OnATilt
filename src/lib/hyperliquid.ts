@@ -53,6 +53,12 @@ export async function fetchCandles(
   timeframe: Timeframe,
   limit: number = 500
 ): Promise<Candle[]> {
+  // Weekly candles: aggregate from daily data so weeks start on Monday
+  // (matches TradingView). The raw API uses different week boundaries.
+  if (timeframe === '1w') {
+    return fetchWeeklyCandles(coin, limit);
+  }
+
   // Monthly candles: aggregate from daily data
   if (timeframe === '1M') {
     return fetchMonthlyCandles(coin, limit);
@@ -135,6 +141,43 @@ async function fetchMonthlyCandles(coin: string, limit: number): Promise<Candle[
     if (days.length === 0) continue;
     result.push({
       time: days[0].time,
+      open: days[0].open,
+      high: Math.max(...days.map(d => d.high)),
+      low: Math.min(...days.map(d => d.low)),
+      close: days[days.length - 1].close,
+      volume: days.reduce((sum, d) => sum + d.volume, 0),
+    });
+  }
+
+  return result.sort((a, b) => a.time - b.time).slice(-limit);
+}
+
+async function fetchWeeklyCandles(coin: string, limit: number): Promise<Candle[]> {
+  // Fetch daily candles and aggregate into Monday-Sunday weeks
+  // to match TradingView's weekly candle alignment
+  const dailyCandles = await fetchCandles(coin, '1d', limit * 7 + 7);
+
+  // Group by ISO week (Monday = start of week)
+  const weeks = new Map<number, Candle[]>();
+  for (const c of dailyCandles) {
+    const d = new Date(c.time);
+    const day = d.getUTCDay(); // 0=Sun, 1=Mon, ..., 6=Sat
+    const mondayOffset = day === 0 ? -6 : 1 - day;
+    const monday = new Date(d.getTime());
+    monday.setUTCDate(d.getUTCDate() + mondayOffset);
+    monday.setUTCHours(0, 0, 0, 0);
+    const key = monday.getTime();
+    if (!weeks.has(key)) weeks.set(key, []);
+    weeks.get(key)!.push(c);
+  }
+
+  // Aggregate each week
+  const result: Candle[] = [];
+  for (const [weekStart, days] of weeks) {
+    if (days.length === 0) continue;
+    days.sort((a, b) => a.time - b.time);
+    result.push({
+      time: weekStart,
       open: days[0].open,
       high: Math.max(...days.map(d => d.high)),
       low: Math.min(...days.map(d => d.low)),
