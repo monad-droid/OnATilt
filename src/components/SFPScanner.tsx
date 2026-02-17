@@ -13,6 +13,13 @@ const SCAN_TIMEFRAMES: { value: Timeframe; label: string; desc: string }[] = [
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 300; // delay between batches to avoid rate limits
 
+const LOOKBACK_OPTIONS: { value: number; label: string; desc: string }[] = [
+  { value: 1, label: 'This', desc: 'Current candle only' },
+  { value: 2, label: '+1', desc: 'Current + last candle' },
+  { value: 3, label: '+2', desc: 'Current + last 2' },
+  { value: 4, label: '+3', desc: 'Current + last 3' },
+];
+
 interface SFPScannerProps {
   onSelectCoin: (coin: string, timeframe: Timeframe) => void;
 }
@@ -22,6 +29,7 @@ type DebugData = Record<string, any>;
 
 export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1w');
+  const [lookback, setLookback] = useState(2);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState({ scanned: 0, total: 0, found: 0 });
   const [results, setResults] = useState<ScannerResult[]>([]);
@@ -73,7 +81,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           const res = await fetch('/api/scanner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 2 }),
+            body: JSON.stringify({ coins: batch, timeframe, recentCandles: lookback }),
           });
 
           const data = await res.json();
@@ -105,7 +113,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     } finally {
       setScanning(false);
     }
-  }, [timeframe]);
+  }, [timeframe, lookback]);
 
   const cancelScan = useCallback(() => {
     cancelRef.current = true;
@@ -184,6 +192,24 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               } disabled:opacity-50`}
             >
               {tf.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
+          {LOOKBACK_OPTIONS.map((opt) => (
+            <button
+              key={opt.value}
+              onClick={() => setLookback(opt.value)}
+              disabled={scanning}
+              title={opt.desc}
+              className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                lookback === opt.value
+                  ? 'bg-purple-500 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              } disabled:opacity-50`}
+            >
+              {opt.label}
             </button>
           ))}
         </div>
@@ -329,7 +355,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
                   const wickPct = ((sfp.wickDepth / sfp.sweptSwing.price) * 100).toFixed(2);
                   const isBullish = sfp.type === 'bullish';
                   const candlesFromEnd = r.totalCandles - 1 - sfp.sweepCandleIndex;
-                  const whenLabel = candlesFromEnd === 0 ? 'This' : 'Last';
+                  const whenLabel = candlesFromEnd === 0 ? 'This' : candlesFromEnd === 1 ? '-1' : `-${candlesFromEnd}`;
 
                   return (
                     <tr
@@ -396,7 +422,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               Scan all Hyperliquid perps for {tfLabel}
             </p>
             <p className="text-gray-600 text-xs">
-              Checks current + last completed candle for swing sweeps
+              Checks last {lookback} candle{lookback > 1 ? 's' : ''} for swing sweeps
             </p>
           </div>
         </div>
