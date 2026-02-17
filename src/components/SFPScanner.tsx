@@ -13,6 +13,13 @@ const SCAN_TIMEFRAMES: { value: Timeframe; label: string; desc: string }[] = [
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 300; // delay between batches to avoid rate limits
 
+const SCAN_DEPTHS = [
+  { value: 1, label: 'This' },
+  { value: 2, label: '+1' },
+  { value: 3, label: '+2' },
+  { value: 4, label: '+3' },
+] as const;
+
 type SortField = 'default' | 'mcap' | 'wick' | 'trend' | 'when';
 type SortDirection = 'asc' | 'desc';
 
@@ -30,6 +37,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [results, setResults] = useState<ScannerResult[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [hasScanned, setHasScanned] = useState(false);
+  const [scanDepth, setScanDepth] = useState(1);
   const [filter, setFilter] = useState<'all' | 'bullish' | 'bearish'>('all');
   const [sortBy, setSortBy] = useState<SortField>('default');
   const [sortDirection, setSortDirection] = useState<SortDirection>('desc');
@@ -93,7 +101,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           const res = await fetch('/api/scanner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 4 }),
+            body: JSON.stringify({ coins: batch, timeframe, recentCandles: scanDepth }),
           });
 
           const data = await res.json();
@@ -129,7 +137,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     } finally {
       setScanning(false);
     }
-  }, [timeframe]);
+  }, [timeframe, scanDepth]);
 
   const cancelScan = useCallback(() => {
     cancelRef.current = true;
@@ -245,6 +253,23 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               } disabled:opacity-50`}
             >
               {tf.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
+          {SCAN_DEPTHS.map((d) => (
+            <button
+              key={d.value}
+              onClick={() => setScanDepth(d.value)}
+              disabled={scanning}
+              className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                scanDepth === d.value
+                  ? 'bg-yellow-500/20 text-yellow-400'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              } disabled:opacity-50`}
+            >
+              {d.label}
             </button>
           ))}
         </div>
@@ -486,7 +511,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               Scan all Hyperliquid perps for {tfLabel}
             </p>
             <p className="text-gray-600 text-xs">
-              Checks current candle + last 3 completed candles for swing sweeps
+              Checks {scanDepth === 1 ? 'current candle' : `current candle + last ${scanDepth - 1}`} for swing sweeps
             </p>
           </div>
         </div>
