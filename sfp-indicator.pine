@@ -6,6 +6,9 @@ swingLen   = input.int(3,      "Swing Lookback/Lookahead", minval=1, maxval=20)
 minWickPct = input.float(0.05, "Min Wick Beyond Swing (%)", minval=0.0, step=0.01)
 maxAge     = input.int(500,    "Max Swing Age (bars)",      minval=50, maxval=2000,
              tooltip="Swings older than this are expired. Website uses 500 candles.")
+showRecent = input.bool(false, "Show Recent Only",
+             tooltip="When enabled, only shows SFP markers within the last N bars. Disable to see full history.")
+recentBars = input.int(20,    "Recent Bars Count", minval=5, maxval=500)
 showBull   = input.bool(true,  "Show Bullish SFPs")
 showBear   = input.bool(true,  "Show Bearish SFPs")
 bullColor  = input.color(color.new(#00e676, 0), "Bullish Color")
@@ -114,10 +117,12 @@ if showBull and array.size(slPrices) > 0
                 array.set(slStatus, i, 1)
 
 // ── Plot ────────────────────────────────────────────────────
-plotshape(bearishSFP, title="Bearish SFP", style=shape.triangledown,
+inRange = not showRecent or bar_index >= last_bar_index - recentBars
+
+plotshape(bearishSFP and inRange, title="Bearish SFP", style=shape.triangledown,
      location=location.abovebar, color=bearColor, size=size.small, text="SFP")
 
-plotshape(bullishSFP, title="Bullish SFP", style=shape.triangleup,
+plotshape(bullishSFP and inRange, title="Bullish SFP", style=shape.triangleup,
      location=location.belowbar, color=bullColor, size=size.small, text="SFP")
 
 // ── Alerts ──────────────────────────────────────────────────
