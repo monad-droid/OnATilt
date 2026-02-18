@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { fetchCandles } from '@/lib/hyperliquid';
 import { scanForSFPs, debugSFPDetection } from '@/lib/analysis';
-import type { Timeframe, ScannerResult } from '@/types';
+import { saveDetections, type SFPDetectionRow } from '@/lib/db';
+import type { Timeframe, ScannerResult, SFP } from '@/types';
 
 const CANDLE_LIMITS: Partial<Record<Timeframe, number>> = {
   '1w': 100,
@@ -79,9 +80,47 @@ export async function POST(request: NextRequest) {
       if (r) results.push(r);
     }
 
-    return NextResponse.json({ results });
+    // Persist SFP detections to SQLite
+    const detectionRows: SFPDetectionRow[] = [];
+    for (const r of results) {
+      for (const sfp of r.sfps) {
+        detectionRows.push(scannerResultToRow(r, sfp, timeframe));
+      }
+    }
+    let saved = 0;
+    if (detectionRows.length > 0) {
+      try {
+        saved = saveDetections(detectionRows);
+      } catch {
+        // Don't fail the scan if DB write fails
+      }
+    }
+
+    return NextResponse.json({ results, saved });
   } catch (err) {
     const message = err instanceof Error ? err.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
   }
+}
+
+function scannerResultToRow(r: ScannerResult, sfp: SFP, timeframe: Timeframe): SFPDetectionRow {
+  return {
+    coin: r.coin,
+    timeframe,
+    sfp_type: sfp.type,
+    swept_swing_price: sfp.sweptSwing.price,
+    swept_swing_type: sfp.sweptSwing.type,
+    swept_swing_time: sfp.sweptSwing.time,
+    sweep_candle_time: sfp.sweepCandle.time,
+    sweep_candle_open: sfp.sweepCandle.open,
+    sweep_candle_high: sfp.sweepCandle.high,
+    sweep_candle_low: sfp.sweepCandle.low,
+    sweep_candle_close: sfp.sweepCandle.close,
+    sweep_candle_volume: sfp.sweepCandle.volume,
+    wick_depth: sfp.wickDepth,
+    wick_pct: (sfp.wickDepth / sfp.sweptSwing.price) * 100,
+    price_at_detection: r.currentPrice,
+    trend_at_detection: r.trend,
+    detected_at: r.scannedAt,
+  };
 }
