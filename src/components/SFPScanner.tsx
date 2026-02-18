@@ -10,6 +10,13 @@ const SCAN_TIMEFRAMES: { value: Timeframe; label: string; desc: string }[] = [
   { value: '4h', label: '4H', desc: '4h SFPs' },
 ];
 
+const CANDLE_LOOKBACK: { value: number; label: string }[] = [
+  { value: 1, label: 'This' },
+  { value: 2, label: '+1' },
+  { value: 3, label: '+2' },
+  { value: 4, label: '+3' },
+];
+
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 300; // delay between batches to avoid rate limits
 
@@ -22,6 +29,7 @@ type DebugData = Record<string, any>;
 
 export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1w');
+  const [recentCandles, setRecentCandles] = useState(2);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState({ scanned: 0, total: 0, found: 0 });
   const [results, setResults] = useState<ScannerResult[]>([]);
@@ -73,7 +81,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
           const res = await fetch('/api/scanner', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ coins: batch, timeframe, recentCandles: 2 }),
+            body: JSON.stringify({ coins: batch, timeframe, recentCandles }),
           });
 
           const data = await res.json();
@@ -105,7 +113,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     } finally {
       setScanning(false);
     }
-  }, [timeframe]);
+  }, [timeframe, recentCandles]);
 
   const cancelScan = useCallback(() => {
     cancelRef.current = true;
@@ -184,6 +192,23 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               } disabled:opacity-50`}
             >
               {tf.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
+          {CANDLE_LOOKBACK.map((cb) => (
+            <button
+              key={cb.value}
+              onClick={() => setRecentCandles(cb.value)}
+              disabled={scanning}
+              className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                recentCandles === cb.value
+                  ? 'bg-purple-500 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              } disabled:opacity-50`}
+            >
+              {cb.label}
             </button>
           ))}
         </div>
