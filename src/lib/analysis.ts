@@ -7,6 +7,7 @@ import type {
   MarketStructure,
   Trend,
   SFP,
+  RSIDivergence,
   Range,
   OrderBlock,
   FairValueGap,
@@ -416,6 +417,249 @@ export function debugSFPDetection(
 }
 
 // ============================================================
+// RSI Divergence Detection (ported from rsi-divergence.pine)
+// ============================================================
+
+/**
+ * Calculate RSI for a candle array.
+ * Uses standard Wilder smoothing (exponential moving average of gains/losses).
+ */
+function calculateRSI(candles: Candle[], length: number = 14): number[] {
+  const rsi = new Array<number>(candles.length).fill(50);
+  if (candles.length < length + 1) return rsi;
+
+  // Seed with simple average of first `length` changes
+  let avgGain = 0;
+  let avgLoss = 0;
+  for (let i = 1; i <= length; i++) {
+    const delta = candles[i].close - candles[i - 1].close;
+    if (delta > 0) avgGain += delta;
+    else avgLoss += -delta;
+  }
+  avgGain /= length;
+  avgLoss /= length;
+
+  rsi[length] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+
+  // Wilder smoothing for the rest
+  for (let i = length + 1; i < candles.length; i++) {
+    const delta = candles[i].close - candles[i - 1].close;
+    const gain = delta > 0 ? delta : 0;
+    const loss = delta < 0 ? -delta : 0;
+    avgGain = (avgGain * (length - 1) + gain) / length;
+    avgLoss = (avgLoss * (length - 1) + loss) / length;
+    rsi[i] = avgLoss === 0 ? 100 : 100 - 100 / (1 + avgGain / avgLoss);
+  }
+
+  return rsi;
+}
+
+/**
+ * Detect RSI pivot lows/highs using a lookback window on RSI values.
+ * Returns index into the candle array where the pivot occurs.
+ */
+function detectRSIPivots(
+  rsi: number[],
+  lookback: number,
+): { lows: number[]; highs: number[] } {
+  const lows: number[] = [];
+  const highs: number[] = [];
+
+  for (let i = lookback; i < rsi.length - lookback; i++) {
+    let isLow = true;
+    let isHigh = true;
+    for (let j = 1; j <= lookback; j++) {
+      if (rsi[i] >= rsi[i - j] || rsi[i] >= rsi[i + j]) isLow = false;
+      if (rsi[i] <= rsi[i - j] || rsi[i] <= rsi[i + j]) isHigh = false;
+    }
+    if (isLow) lows.push(i);
+    if (isHigh) highs.push(i);
+  }
+
+  return { lows, highs };
+}
+
+/**
+ * Detect RSI divergences with neutral zone reset logic.
+ *
+ * Bull divergence: price makes a lower low while RSI makes a higher low.
+ * Bear divergence: price makes a higher high while RSI makes a lower high.
+ *
+ * The neutral zone (RSI 48–52) acts as a reset: stored pivot references
+ * are cleared each time RSI passes through it, preventing stale divergences
+ * from firing.
+ */
+export function detectDivergences(
+  candles: Candle[],
+  rsiLength: number = 14,
+  pivotLookback: number = 3,
+  maxBars: number = 14,
+  neutralLo: number = 48,
+  neutralHi: number = 52,
+): RSIDivergence[] {
+  const divergences: RSIDivergence[] = [];
+  if (candles.length < rsiLength + pivotLookback * 2 + 2) return divergences;
+
+  const rsi = calculateRSI(candles, rsiLength);
+  const { lows: rsiPivotLowIndices, highs: rsiPivotHighIndices } = detectRSIPivots(rsi, pivotLookback);
+
+  // --- Bullish divergence scan ---
+  // Walk through RSI pivot lows in chronological order, tracking the
+  // "previous" pivot.  Reset when RSI enters the neutral zone between pivots.
+  {
+    let prevIdx: number | null = null;
+    let prevRsi = 0;
+    let prevPrice = 0;
+    let hasResetOnce = false;
+
+    for (const idx of rsiPivotLowIndices) {
+      // Check if RSI crossed through the neutral zone since the previous pivot
+      const checkFrom = prevIdx !== null ? prevIdx + 1 : 0;
+      let neutralCrossed = false;
+      for (let k = checkFrom; k < idx; k++) {
+        if (rsi[k] >= neutralLo && rsi[k] <= neutralHi) {
+          neutralCrossed = true;
+          break;
+        }
+      }
+
+      if (neutralCrossed) {
+        // Reset stored pivot
+        prevIdx = null;
+        hasResetOnce = true;
+      }
+
+      if (!hasResetOnce) {
+        // Haven't seen neutral yet — just store and move on
+        prevIdx = idx;
+        prevRsi = rsi[idx];
+        // Lowest close in the pivot window
+        let lowestClose = Infinity;
+        for (let k = Math.max(0, idx - pivotLookback); k <= Math.min(candles.length - 1, idx + pivotLookback); k++) {
+          if (candles[k].close < lowestClose) lowestClose = candles[k].close;
+        }
+        prevPrice = lowestClose;
+        continue;
+      }
+
+      // Lowest close in the pivot window
+      let lowestClose = Infinity;
+      for (let k = Math.max(0, idx - pivotLookback); k <= Math.min(candles.length - 1, idx + pivotLookback); k++) {
+        if (candles[k].close < lowestClose) lowestClose = candles[k].close;
+      }
+
+      if (prevIdx !== null) {
+        const barsBetween = idx - prevIdx;
+        if (barsBetween > 0 && barsBetween <= maxBars) {
+          // Bull div: price lower low, RSI higher low
+          if (lowestClose < prevPrice && rsi[idx] > prevRsi) {
+            divergences.push({
+              type: 'bullish',
+              prevPivotIndex: prevIdx,
+              prevPivotTime: candles[prevIdx].time,
+              pivotIndex: idx,
+              pivotTime: candles[idx].time,
+              prevRsi: prevRsi,
+              rsi: rsi[idx],
+              prevPrice: prevPrice,
+              price: lowestClose,
+            });
+          }
+        }
+
+        // Only update stored pivot if RSI moved in a useful direction
+        // (don't overwrite with a higher-RSI pivot that could mask a future div)
+        if (rsi[idx] <= prevRsi) {
+          prevIdx = idx;
+          prevRsi = rsi[idx];
+          prevPrice = lowestClose;
+        }
+      } else {
+        // First pivot after reset
+        prevIdx = idx;
+        prevRsi = rsi[idx];
+        prevPrice = lowestClose;
+      }
+    }
+  }
+
+  // --- Bearish divergence scan ---
+  {
+    let prevIdx: number | null = null;
+    let prevRsi = 0;
+    let prevPrice = 0;
+    let hasResetOnce = false;
+
+    for (const idx of rsiPivotHighIndices) {
+      const checkFrom = prevIdx !== null ? prevIdx + 1 : 0;
+      let neutralCrossed = false;
+      for (let k = checkFrom; k < idx; k++) {
+        if (rsi[k] >= neutralLo && rsi[k] <= neutralHi) {
+          neutralCrossed = true;
+          break;
+        }
+      }
+
+      if (neutralCrossed) {
+        prevIdx = null;
+        hasResetOnce = true;
+      }
+
+      if (!hasResetOnce) {
+        prevIdx = idx;
+        prevRsi = rsi[idx];
+        let highestClose = -Infinity;
+        for (let k = Math.max(0, idx - pivotLookback); k <= Math.min(candles.length - 1, idx + pivotLookback); k++) {
+          if (candles[k].close > highestClose) highestClose = candles[k].close;
+        }
+        prevPrice = highestClose;
+        continue;
+      }
+
+      let highestClose = -Infinity;
+      for (let k = Math.max(0, idx - pivotLookback); k <= Math.min(candles.length - 1, idx + pivotLookback); k++) {
+        if (candles[k].close > highestClose) highestClose = candles[k].close;
+      }
+
+      if (prevIdx !== null) {
+        const barsBetween = idx - prevIdx;
+        if (barsBetween > 0 && barsBetween <= maxBars) {
+          // Bear div: price higher high, RSI lower high
+          if (highestClose > prevPrice && rsi[idx] < prevRsi) {
+            divergences.push({
+              type: 'bearish',
+              prevPivotIndex: prevIdx,
+              prevPivotTime: candles[prevIdx].time,
+              pivotIndex: idx,
+              pivotTime: candles[idx].time,
+              prevRsi: prevRsi,
+              rsi: rsi[idx],
+              prevPrice: prevPrice,
+              price: highestClose,
+            });
+          }
+        }
+
+        if (rsi[idx] >= prevRsi) {
+          prevIdx = idx;
+          prevRsi = rsi[idx];
+          prevPrice = highestClose;
+        }
+      } else {
+        prevIdx = idx;
+        prevRsi = rsi[idx];
+        prevPrice = highestClose;
+      }
+    }
+  }
+
+  // Sort by pivot index
+  divergences.sort((a, b) => a.pivotIndex - b.pivotIndex);
+
+  return divergences;
+}
+
+// ============================================================
 // Range Detection — ICT Current Price Leg
 // ============================================================
 
@@ -708,6 +952,7 @@ export function runFullAnalysis(
 ): AnalysisResult {
   const marketStructure = analyzeMarketStructure(candles, swingStrength);
   const sfps = detectSFPs(candles, marketStructure.swings);
+  const divergences = detectDivergences(candles);
   const ranges = detectRanges(candles, marketStructure.swings);
   const orderBlocks = detectOrderBlocks(candles);
   const fvgs = detectFVGs(candles);
@@ -741,6 +986,7 @@ export function runFullAnalysis(
     timestamp: Date.now(),
     marketStructure,
     sfps,
+    divergences,
     ranges,
     orderBlocks,
     fvgs,

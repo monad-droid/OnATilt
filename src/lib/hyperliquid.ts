@@ -291,6 +291,57 @@ export async function cancelOrder(coin: string, orderId: number): Promise<{ succ
 }
 
 // ============================================================
+// Market Cap Data (via CoinGecko)
+// ============================================================
+
+let mcapCache: { data: Map<string, number>; fetchedAt: number } | null = null;
+const MCAP_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+
+/**
+ * Fetch market cap data from CoinGecko for all coins.
+ * Returns a Map of uppercased symbol -> market cap in USD.
+ * Cached for 10 minutes to avoid rate limits.
+ */
+export async function fetchMarketCaps(): Promise<Map<string, number>> {
+  if (mcapCache && Date.now() - mcapCache.fetchedAt < MCAP_CACHE_TTL) {
+    return mcapCache.data;
+  }
+
+  const mcaps = new Map<string, number>();
+
+  // Fetch top coins by market cap (CoinGecko free tier: 250 per page)
+  for (const page of [1, 2]) {
+    try {
+      const response = await fetch(
+        `https://api.coingecko.com/api/v3/coins/markets?vs_currency=usd&order=market_cap_desc&per_page=250&page=${page}`,
+        { headers: { accept: 'application/json' } },
+      );
+
+      if (!response.ok) break;
+
+      const data = await response.json() as {
+        symbol: string;
+        market_cap: number | null;
+      }[];
+
+      for (const coin of data) {
+        if (coin.market_cap) {
+          mcaps.set(coin.symbol.toUpperCase(), coin.market_cap);
+        }
+      }
+    } catch {
+      break; // Don't fail if CoinGecko is down
+    }
+  }
+
+  if (mcaps.size > 0) {
+    mcapCache = { data: mcaps, fetchedAt: Date.now() };
+  }
+
+  return mcaps;
+}
+
+// ============================================================
 // Helpers
 // ============================================================
 

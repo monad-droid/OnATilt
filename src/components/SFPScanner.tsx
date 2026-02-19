@@ -17,6 +17,13 @@ const CANDLE_LOOKBACK: { value: number; label: string }[] = [
   { value: 4, label: '+3' },
 ];
 
+const MCAP_FILTERS: { value: number; label: string }[] = [
+  { value: 0, label: 'All' },
+  { value: 100_000_000, label: '$100M+' },
+  { value: 500_000_000, label: '$500M+' },
+  { value: 1_000_000_000, label: '$1B+' },
+];
+
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 300; // delay between batches to avoid rate limits
 
@@ -30,6 +37,7 @@ type DebugData = Record<string, any>;
 export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1w');
   const [recentCandles, setRecentCandles] = useState(2);
+  const [minMcap, setMinMcap] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState({ scanned: 0, total: 0, found: 0 });
   const [results, setResults] = useState<ScannerResult[]>([]);
@@ -67,7 +75,29 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
         return;
       }
 
-      const allCoins: string[] = assetsData.assets.map((a: { name: string }) => a.name);
+      let allCoins: string[] = assetsData.assets.map((a: { name: string }) => a.name);
+
+      // Filter by market cap if a minimum is set
+      if (minMcap > 0) {
+        try {
+          const mcapRes = await fetch('/api/market-data', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'mcaps' }),
+          });
+          const mcapData = await mcapRes.json();
+          if (mcapData.mcaps) {
+            const mcaps: Record<string, number> = mcapData.mcaps;
+            allCoins = allCoins.filter((coin) => {
+              const cap = mcaps[coin] ?? mcaps[coin.toUpperCase()] ?? 0;
+              return cap >= minMcap;
+            });
+          }
+        } catch {
+          // If mcap fetch fails, scan all coins
+        }
+      }
+
       setProgress({ scanned: 0, total: allCoins.length, found: 0 });
 
       const allResults: ScannerResult[] = [];
@@ -113,7 +143,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     } finally {
       setScanning(false);
     }
-  }, [timeframe, recentCandles]);
+  }, [timeframe, recentCandles, minMcap]);
 
   const cancelScan = useCallback(() => {
     cancelRef.current = true;
@@ -209,6 +239,23 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               } disabled:opacity-50`}
             >
               {cb.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
+          {MCAP_FILTERS.map((mc) => (
+            <button
+              key={mc.value}
+              onClick={() => setMinMcap(mc.value)}
+              disabled={scanning}
+              className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
+                minMcap === mc.value
+                  ? 'bg-cyan-500 text-white'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
+              } disabled:opacity-50`}
+            >
+              {mc.label}
             </button>
           ))}
         </div>
