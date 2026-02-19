@@ -28,9 +28,9 @@ if inNeutral
 // Detect pivots on RSI, then read price at that same bar
 rsiPivotLow  = ta.pivotlow(rsi,  pivotLookback, pivotLookback)
 rsiPivotHigh = ta.pivothigh(rsi, pivotLookback, pivotLookback)
-// Price at the pivot bar (lookback bars ago) — uses candle closes
-priceLowAtPivot  = close[pivotLookback]
-priceHighAtPivot = close[pivotLookback]
+// Price extremes in the pivot window (pivotLookback bars each side) — uses candle closes
+priceLowAtPivot  = ta.lowest(close, 2 * pivotLookback + 1)
+priceHighAtPivot = ta.highest(close, 2 * pivotLookback + 1)
 // ── Track previous valid pivots ─────────────────────────────────
 var float prevRsiLow     = na
 var float prevPriceLow   = na
