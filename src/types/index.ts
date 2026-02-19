@@ -109,23 +109,6 @@ export interface FairValueGap {
   fillPercent: number;
 }
 
-// --- RSI Divergence ---
-
-export interface RSIDivergence {
-  type: 'bullish' | 'bearish';
-  // The two pivot points forming the divergence
-  prevPivotIndex: number;       // candle index of earlier pivot
-  prevPivotTime: number;
-  pivotIndex: number;           // candle index of later pivot
-  pivotTime: number;
-  // RSI values at each pivot
-  prevRsi: number;
-  rsi: number;
-  // Price values at each pivot
-  prevPrice: number;
-  price: number;
-}
-
 // --- Analysis Result ---
 
 export interface AnalysisResult {
@@ -134,7 +117,6 @@ export interface AnalysisResult {
   timestamp: number;
   marketStructure: MarketStructure;
   sfps: SFP[];
-  divergences: RSIDivergence[];
   ranges: Range[];
   orderBlocks: OrderBlock[];
   fvgs: FairValueGap[];

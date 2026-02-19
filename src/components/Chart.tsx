@@ -18,7 +18,6 @@ interface ChartProps {
 interface IndicatorToggles {
   structure: boolean;
   sfp: boolean;
-  div: boolean;
   ob: boolean;
   fvg: boolean;
   range: boolean;
@@ -36,7 +35,6 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
   const [toggles, setToggles] = useState<IndicatorToggles>({
     structure: true,
     sfp: true,
-    div: true,
     ob: true,
     fvg: true,
     range: true,
@@ -146,19 +144,6 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
             color: sfp.type === 'bullish' ? '#22c55e' : '#ef4444',
             shape: 'circle',
             text: 'SFP',
-          });
-        }
-      }
-
-      // RSI Divergence markers
-      if (toggles.div) {
-        for (const div of analysis.divergences) {
-          markers.push({
-            time: toTime(div.pivotTime),
-            position: div.type === 'bullish' ? 'belowBar' : 'aboveBar',
-            color: div.type === 'bullish' ? '#22c55e' : '#ef4444',
-            shape: 'arrowUp',
-            text: div.type === 'bullish' ? 'BULL DIV' : 'BEAR DIV',
           });
         }
       }
@@ -338,7 +323,6 @@ export default function Chart({ candles, analysis, height = 600 }: ChartProps) {
   const toggleButtons: { key: keyof IndicatorToggles; label: string; color: string }[] = [
     { key: 'structure', label: 'Structure', color: '#6b7280' },
     { key: 'sfp', label: 'SFPs', color: '#22c55e' },
-    { key: 'div', label: 'RSI Div', color: '#f59e0b' },
     { key: 'ob', label: 'OBs', color: '#a78bfa' },
     { key: 'fvg', label: 'FVGs', color: '#f97316' },
     { key: 'range', label: 'Range', color: '#eab308' },
