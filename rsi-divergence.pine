@@ -1,96 +1,659 @@
-// This Pine Script(TM) indicator is subject to the terms of the Mozilla Public License 2.0
-// https://mozilla.org/MPL/2.0/
-// OnATilt - RSI Divergence with Neutral Zone Reset
+// RSI Divergence Indicator — fikira pivot-based detection
+// Ported from @fikira's Divergences (RSI) with modifications
+// Original: https://github.com/fikira12/Divergences
+// Original source subject to Mozilla Public License 2.0 and CC0 1.0 Universal
+//
+// Draws divergence lines on the RSI pane (overlay=false).
+// Detects regular + hidden divergences across up to 8 pivot depths.
+// Intermediate pivots are validated with a configurable margin so that
+// pivots between the two endpoints don't break the divergence line.
+// No neutral zone reset.
 //@version=6
-indicator("RSI Divergence (Neutral Reset)", overlay=false, max_lines_count=500, max_labels_count=500)
-// ── Inputs ──────────────────────────────────────────────────────
-rsiLen        = input.int(14,  "RSI Length")
-pivotLookback = input.int(3,   "Pivot Lookback", minval=1, maxval=10)
-maxBars       = input.int(14,  "Max Bars Between Pivots", minval=5, maxval=50)
-neutralHi     = input.float(52.0, "Neutral Zone Upper")
-neutralLo     = input.float(48.0, "Neutral Zone Lower")
-bullColor     = input.color(color.green, "Bullish Divergence Color")
-bearColor     = input.color(color.red,   "Bearish Divergence Color")
-lineWidth     = input.int(2, "Divergence Line Width", minval=1, maxval=5)
-// ── RSI ─────────────────────────────────────────────────────────
-rsi = ta.rsi(close, rsiLen)
-// ── Neutral zone detection ──────────────────────────────────────
-inNeutral = rsi >= neutralLo and rsi <= neutralHi
-var int barsSinceNeutral = 999
-if inNeutral
-    barsSinceNeutral := 0
-else
-    barsSinceNeutral += 1
-var bool hasResetOnce = false
-if inNeutral
-    hasResetOnce := true
-// ── Pivot detection (RSI only) ──────────────────────────────────
-// Detect pivots on RSI, then read price at that same bar
-rsiPivotLow  = ta.pivotlow(rsi,  pivotLookback, pivotLookback)
-rsiPivotHigh = ta.pivothigh(rsi, pivotLookback, pivotLookback)
-// Price extremes in the pivot window (pivotLookback bars each side) — uses candle closes
-priceLowAtPivot  = ta.lowest(close, 2 * pivotLookback + 1)
-priceHighAtPivot = ta.highest(close, 2 * pivotLookback + 1)
-// ── Track previous valid pivots ─────────────────────────────────
-var float prevRsiLow     = na
-var float prevPriceLow   = na
-var int   prevLowBar     = na
-var float prevRsiHigh    = na
-var float prevPriceHigh  = na
-var int   prevHighBar    = na
-pivotBarIndex = bar_index - pivotLookback
-// ── Neutral zone resets stored pivots ───────────────────────────
-if inNeutral
-    prevRsiLow    := na
-    prevPriceLow  := na
-    prevLowBar    := na
-    prevRsiHigh   := na
-    prevPriceHigh := na
-    prevHighBar   := na
-// ── Bullish divergence: price lower low, RSI higher low ────────
-bullDiv = false
-if not na(rsiPivotLow) and hasResetOnce
-    if barsSinceNeutral > pivotLookback
-        shouldUpdate = true
-        if not na(prevRsiLow)
-            barsBetween = pivotBarIndex - prevLowBar
-            if barsBetween > 0 and barsBetween <= maxBars
-                if priceLowAtPivot < prevPriceLow and rsiPivotLow > prevRsiLow
-                    bullDiv := true
-                    line.new(prevLowBar, prevRsiLow, pivotBarIndex, rsiPivotLow, color=bullColor, width=lineWidth, style=line.style_solid)
-                    label.new(pivotBarIndex, rsiPivotLow - 2, "BULL", color=color.new(bullColor, 20), textcolor=color.white, style=label.style_label_up, size=size.small)
-                else if rsiPivotLow > prevRsiLow
-                    shouldUpdate := false
-        if shouldUpdate
-            prevRsiLow   := rsiPivotLow
-            prevPriceLow := priceLowAtPivot
-            prevLowBar   := pivotBarIndex
-// ── Bearish divergence: price higher high, RSI lower high ──────
-bearDiv = false
-if not na(rsiPivotHigh) and hasResetOnce
-    if barsSinceNeutral > pivotLookback
-        shouldUpdate = true
-        if not na(prevRsiHigh)
-            barsBetween = pivotBarIndex - prevHighBar
-            if barsBetween > 0 and barsBetween <= maxBars
-                if priceHighAtPivot > prevPriceHigh and rsiPivotHigh < prevRsiHigh
-                    bearDiv := true
-                    line.new(prevHighBar, prevRsiHigh, pivotBarIndex, rsiPivotHigh, color=bearColor, width=lineWidth, style=line.style_solid)
-                    label.new(pivotBarIndex, rsiPivotHigh + 2, "BEAR", color=color.new(bearColor, 20), textcolor=color.white, style=label.style_label_down, size=size.small)
-                else if rsiPivotHigh < prevRsiHigh
-                    shouldUpdate := false
-        if shouldUpdate
-            prevRsiHigh   := rsiPivotHigh
-            prevPriceHigh := priceHighAtPivot
-            prevHighBar   := pivotBarIndex
-// ── Plotting ────────────────────────────────────────────────────
+indicator("RSI Divergences (fikira)", shorttitle="DIV (RSI)", overlay=false,
+     max_lines_count=500, max_labels_count=500)
+
+// ── Inputs ────────────────────────────────────────────────────────
+len       = input.int(14, "RSI Length")
+src       = input(close, "RSI Source")
+show_piv  = input.bool(false, "Show Pivot Labels")
+show_div  = input.bool(true, "Show Regular Divergences")
+show_hid  = input.bool(true, "Show Hidden Divergences")
+lw        = input.int(2, "Line Width", minval=1, maxval=5)
+LB        = input.int(10, "Left Bars (pivot)")
+RB        = input.int(1,  "Right Bars (pivot)")
+_m        = input.string("0", "Margin", options=["0","0.236","0.382","0.5","0.618","0.786","1","1.272","1.618","1.786","2"])
+
+// ── Parse margin ──────────────────────────────────────────────────
+m = _m == "0" ? 0.0 : _m == "0.236" ? 0.236 : _m == "0.382" ? 0.382 : _m == "0.5" ? 0.5 : _m == "0.618" ? 0.618 : _m == "0.786" ? 0.786 : _m == "1" ? 1.0 : _m == "1.272" ? 1.272 : _m == "1.618" ? 1.618 : _m == "1.786" ? 1.786 : _m == "2" ? 2.0 : 0.0
+
+// ── RSI ───────────────────────────────────────────────────────────
+rsi = ta.rsi(src, len)
+
+// ── Candle body prices for pivot detection ────────────────────────
+// Green candle → close is the body high/low candidate
+// Red candle   → close is the body high/low candidate (na otherwise)
+nwh  = close > open ? close : na      // body highs (for bearish div pivots)
+nwl  = close < open ? close : na      // body lows  (for bullish div pivots)
+nwh_ = close > open ? high  : na      // wick highs (for margin calculations)
+nwl_ = close < open ? low   : na      // wick lows  (for margin calculations)
+
+// ── Pivot detection ───────────────────────────────────────────────
+ph  = ta.pivothigh(nwh,  LB, RB)      // price body pivot highs
+pl  = ta.pivotlow(nwl,   LB, RB)      // price body pivot lows
+rh  = ta.pivothigh(rsi,  LB, RB)      // RSI pivot highs
+rl  = ta.pivotlow(rsi,   LB, RB)      // RSI pivot lows
+
+// ── Historical pivot values (0 = most recent, 8 = oldest) ────────
+// Price body values at pivot occurrences
+hh0 = ta.valuewhen(ph, nwh[1],  0)
+hh1 = hh0 ? ta.valuewhen(ph, nwh[1],  1) : na
+hh2 = hh0 ? ta.valuewhen(ph, nwh[1],  2) : na
+hh3 = hh0 ? ta.valuewhen(ph, nwh[1],  3) : na
+hh4 = hh0 ? ta.valuewhen(ph, nwh[1],  4) : na
+hh5 = hh0 ? ta.valuewhen(ph, nwh[1],  5) : na
+hh6 = hh0 ? ta.valuewhen(ph, nwh[1],  6) : na
+hh7 = hh0 ? ta.valuewhen(ph, nwh[1],  7) : na
+hh8 = hh0 ? ta.valuewhen(ph, nwh[1],  8) : na
+
+ll0 = ta.valuewhen(pl, nwl[1],  0)
+ll1 = ll0 ? ta.valuewhen(pl, nwl[1],  1) : na
+ll2 = ll0 ? ta.valuewhen(pl, nwl[1],  2) : na
+ll3 = ll0 ? ta.valuewhen(pl, nwl[1],  3) : na
+ll4 = ll0 ? ta.valuewhen(pl, nwl[1],  4) : na
+ll5 = ll0 ? ta.valuewhen(pl, nwl[1],  5) : na
+ll6 = ll0 ? ta.valuewhen(pl, nwl[1],  6) : na
+ll7 = ll0 ? ta.valuewhen(pl, nwl[1],  7) : na
+ll8 = ll0 ? ta.valuewhen(pl, nwl[1],  8) : na
+
+// Wick extremes at pivot occurrences (for margin validation)
+hh1_ = hh0 ? ta.valuewhen(ph, nwh_[1], 1) : na
+hh2_ = hh0 ? ta.valuewhen(ph, nwh_[1], 2) : na
+hh3_ = hh0 ? ta.valuewhen(ph, nwh_[1], 3) : na
+hh4_ = hh0 ? ta.valuewhen(ph, nwh_[1], 4) : na
+hh5_ = hh0 ? ta.valuewhen(ph, nwh_[1], 5) : na
+hh6_ = hh0 ? ta.valuewhen(ph, nwh_[1], 6) : na
+hh7_ = hh0 ? ta.valuewhen(ph, nwh_[1], 7) : na
+hh8_ = hh0 ? ta.valuewhen(ph, nwh_[1], 8) : na
+
+ll1_ = ll0 ? ta.valuewhen(pl, nwl_[1], 1) : na
+ll2_ = ll0 ? ta.valuewhen(pl, nwl_[1], 2) : na
+ll3_ = ll0 ? ta.valuewhen(pl, nwl_[1], 3) : na
+ll4_ = ll0 ? ta.valuewhen(pl, nwl_[1], 4) : na
+ll5_ = ll0 ? ta.valuewhen(pl, nwl_[1], 5) : na
+ll6_ = ll0 ? ta.valuewhen(pl, nwl_[1], 6) : na
+ll7_ = ll0 ? ta.valuewhen(pl, nwl_[1], 7) : na
+ll8_ = ll0 ? ta.valuewhen(pl, nwl_[1], 8) : na
+
+// RSI values at pivot occurrences
+rsih0 = hh0 ? ta.valuewhen(ph, rsi[1], 0) : na
+rsih1 = hh0 ? ta.valuewhen(ph, rsi[1], 1) : na
+rsih2 = hh0 ? ta.valuewhen(ph, rsi[1], 2) : na
+rsih3 = hh0 ? ta.valuewhen(ph, rsi[1], 3) : na
+rsih4 = hh0 ? ta.valuewhen(ph, rsi[1], 4) : na
+rsih5 = hh0 ? ta.valuewhen(ph, rsi[1], 5) : na
+rsih6 = hh0 ? ta.valuewhen(ph, rsi[1], 6) : na
+rsih7 = hh0 ? ta.valuewhen(ph, rsi[1], 7) : na
+rsih8 = hh0 ? ta.valuewhen(ph, rsi[1], 8) : na
+
+rsil0 = ll0 ? ta.valuewhen(pl, rsi[1], 0) : na
+rsil1 = ll0 ? ta.valuewhen(pl, rsi[1], 1) : na
+rsil2 = ll0 ? ta.valuewhen(pl, rsi[1], 2) : na
+rsil3 = ll0 ? ta.valuewhen(pl, rsi[1], 3) : na
+rsil4 = ll0 ? ta.valuewhen(pl, rsi[1], 4) : na
+rsil5 = ll0 ? ta.valuewhen(pl, rsi[1], 5) : na
+rsil6 = ll0 ? ta.valuewhen(pl, rsi[1], 6) : na
+rsil7 = ll0 ? ta.valuewhen(pl, rsi[1], 7) : na
+rsil8 = ll0 ? ta.valuewhen(pl, rsi[1], 8) : na
+
+// ══════════════════════════════════════════════════════════════════
+// REGULAR BULLISH DIVERGENCE — price LL, RSI HL
+// ══════════════════════════════════════════════════════════════════
+close_LL1 = ll0 < ll1
+rsi_HL1   = rsil0 > rsil1
+
+close_LL2 = ll0 < ll2 and ll1 > ll0 and ll1 > (ll2_ - ((ll2_ - ll0) * m))
+rsi_HL2   = rsil0 > rsil2 and rsil1 > rsil2
+
+close_LL3 = ll0 < ll3 and ll1 > ll0 and ll1 > (ll3_ - ((ll3_ - ll0) * m)) and ll2 > ll0 and ll2 > (ll3_ - ((ll3_ - ll0) * m))
+rsi_HL3   = rsil0 > rsil3 and rsil1 > rsil3 and rsil2 > rsil3
+
+close_LL4 = ll0 < ll4 and ll1 > ll0 and ll1 > (ll4_ - ((ll4_ - ll0) * m)) and ll2 > ll0 and ll2 > (ll4_ - ((ll4_ - ll0) * m)) and ll3 > ll0 and ll3 > (ll4_ - ((ll4_ - ll0) * m))
+rsi_HL4   = rsil0 > rsil4 and rsil1 > rsil4 and rsil2 > rsil4 and rsil3 > rsil4
+
+close_LL5 = ll0 < ll5 and ll1 > ll0 and ll1 > (ll5_ - ((ll5_ - ll0) * m)) and ll2 > ll0 and ll2 > (ll5_ - ((ll5_ - ll0) * m)) and ll3 > ll0 and ll3 > (ll5_ - ((ll5_ - ll0) * m)) and ll4 > ll0 and ll4 > (ll5_ - ((ll5_ - ll0) * m))
+rsi_HL5   = rsil0 > rsil5 and rsil1 > rsil5 and rsil2 > rsil5 and rsil3 > rsil5 and rsil4 > rsil5
+
+close_LL6 = ll0 < ll6 and ll1 > ll0 and ll1 > (ll6_ - ((ll6_ - ll0) * m)) and ll2 > ll0 and ll2 > (ll6_ - ((ll6_ - ll0) * m)) and ll3 > ll0 and ll3 > (ll6_ - ((ll6_ - ll0) * m)) and ll4 > ll0 and ll4 > (ll6_ - ((ll6_ - ll0) * m)) and ll5 > ll0 and ll5 > (ll6_ - ((ll6_ - ll0) * m))
+rsi_HL6   = rsil0 > rsil6 and rsil1 > rsil6 and rsil2 > rsil6 and rsil3 > rsil6 and rsil4 > rsil6 and rsil5 > rsil6
+
+close_LL7 = ll0 < ll7 and ll1 > ll0 and ll1 > (ll7_ - ((ll7_ - ll0) * m)) and ll2 > ll0 and ll2 > (ll7_ - ((ll7_ - ll0) * m)) and ll3 > ll0 and ll3 > (ll7_ - ((ll7_ - ll0) * m)) and ll4 > ll0 and ll4 > (ll7_ - ((ll7_ - ll0) * m)) and ll5 > ll0 and ll5 > (ll7_ - ((ll7_ - ll0) * m)) and ll6 > ll0 and ll6 > (ll7_ - ((ll7_ - ll0) * m))
+rsi_HL7   = rsil0 > rsil7 and rsil1 > rsil7 and rsil2 > rsil7 and rsil3 > rsil7 and rsil4 > rsil7 and rsil5 > rsil7 and rsil6 > rsil7
+
+close_LL8 = ll0 < ll8 and ll1 > ll0 and ll1 > (ll8_ - ((ll8_ - ll0) * m)) and ll2 > ll0 and ll2 > (ll8_ - ((ll8_ - ll0) * m)) and ll3 > ll0 and ll3 > (ll8_ - ((ll8_ - ll0) * m)) and ll4 > ll0 and ll4 > (ll8_ - ((ll8_ - ll0) * m)) and ll5 > ll0 and ll5 > (ll8_ - ((ll8_ - ll0) * m)) and ll6 > ll0 and ll6 > (ll8_ - ((ll8_ - ll0) * m)) and ll7 > ll0 and ll7 > (ll8_ - ((ll8_ - ll0) * m))
+rsi_HL8   = rsil0 > rsil8 and rsil1 > rsil8 and rsil2 > rsil8 and rsil3 > rsil8 and rsil4 > rsil8 and rsil5 > rsil8 and rsil6 > rsil8 and rsil7 > rsil8
+
+div_bull_1 = close_LL1 and rsi_HL1
+div_bull_2 = close_LL2 and rsi_HL2
+div_bull_3 = close_LL3 and rsi_HL3
+div_bull_4 = close_LL4 and rsi_HL4
+div_bull_5 = close_LL5 and rsi_HL5
+div_bull_6 = close_LL6 and rsi_HL6
+div_bull_7 = close_LL7 and rsi_HL7
+div_bull_8 = close_LL8 and rsi_HL8
+
+// ══════════════════════════════════════════════════════════════════
+// REGULAR BEARISH DIVERGENCE — price HH, RSI LH
+// ══════════════════════════════════════════════════════════════════
+close_HH1 = hh0 > hh1
+rsi_LH1   = rsih0 < rsih1
+
+close_HH2 = hh0 > hh2 and hh1 < hh0 and hh1 < (hh2_ + ((hh0 - hh2_) * m))
+rsi_LH2   = rsih0 < rsih2 and rsih1 < rsih2
+
+close_HH3 = hh0 > hh3 and hh1 < hh0 and hh1 < (hh3_ + ((hh0 - hh3_) * m)) and hh2 < hh0 and hh2 < (hh3_ + ((hh0 - hh3_) * m))
+rsi_LH3   = rsih0 < rsih3 and rsih1 < rsih3 and rsih2 < rsih3
+
+close_HH4 = hh0 > hh4 and hh1 < hh0 and hh1 < (hh4_ + ((hh0 - hh4_) * m)) and hh2 < hh0 and hh2 < (hh4_ + ((hh0 - hh4_) * m)) and hh3 < hh0 and hh3 < (hh4_ + ((hh0 - hh4_) * m))
+rsi_LH4   = rsih0 < rsih4 and rsih1 < rsih4 and rsih2 < rsih4 and rsih3 < rsih4
+
+close_HH5 = hh0 > hh5 and hh1 < hh0 and hh1 < (hh5_ + ((hh0 - hh5_) * m)) and hh2 < hh0 and hh2 < (hh5_ + ((hh0 - hh5_) * m)) and hh3 < hh0 and hh3 < (hh5_ + ((hh0 - hh5_) * m)) and hh4 < hh0 and hh4 < (hh5_ + ((hh0 - hh5_) * m))
+rsi_LH5   = rsih0 < rsih5 and rsih1 < rsih5 and rsih2 < rsih5 and rsih3 < rsih5 and rsih4 < rsih5
+
+close_HH6 = hh0 > hh6 and hh1 < hh0 and hh1 < (hh6_ + ((hh0 - hh6_) * m)) and hh2 < hh0 and hh2 < (hh6_ + ((hh0 - hh6_) * m)) and hh3 < hh0 and hh3 < (hh6_ + ((hh0 - hh6_) * m)) and hh4 < hh0 and hh4 < (hh6_ + ((hh0 - hh6_) * m)) and hh5 < hh0 and hh5 < (hh6_ + ((hh0 - hh6_) * m))
+rsi_LH6   = rsih0 < rsih6 and rsih1 < rsih6 and rsih2 < rsih6 and rsih3 < rsih6 and rsih4 < rsih6 and rsih5 < rsih6
+
+close_HH7 = hh0 > hh7 and hh1 < hh0 and hh1 < (hh7_ + ((hh0 - hh7_) * m)) and hh2 < hh0 and hh2 < (hh7_ + ((hh0 - hh7_) * m)) and hh3 < hh0 and hh3 < (hh7_ + ((hh0 - hh7_) * m)) and hh4 < hh0 and hh4 < (hh7_ + ((hh0 - hh7_) * m)) and hh5 < hh0 and hh5 < (hh7_ + ((hh0 - hh7_) * m)) and hh6 < hh0 and hh6 < (hh7_ + ((hh0 - hh7_) * m))
+rsi_LH7   = rsih0 < rsih7 and rsih1 < rsih7 and rsih2 < rsih7 and rsih3 < rsih7 and rsih4 < rsih7 and rsih5 < rsih7 and rsih6 < rsih7
+
+close_HH8 = hh0 > hh8 and hh1 < hh0 and hh1 < (hh8_ + ((hh0 - hh8_) * m)) and hh2 < hh0 and hh2 < (hh8_ + ((hh0 - hh8_) * m)) and hh3 < hh0 and hh3 < (hh8_ + ((hh0 - hh8_) * m)) and hh4 < hh0 and hh4 < (hh8_ + ((hh0 - hh8_) * m)) and hh5 < hh0 and hh5 < (hh8_ + ((hh0 - hh8_) * m)) and hh6 < hh0 and hh6 < (hh8_ + ((hh0 - hh8_) * m)) and hh7 < hh0 and hh7 < (hh8_ + ((hh0 - hh8_) * m))
+rsi_LH8   = rsih0 < rsih8 and rsih1 < rsih8 and rsih2 < rsih8 and rsih3 < rsih8 and rsih4 < rsih8 and rsih5 < rsih8 and rsih6 < rsih8 and rsih7 < rsih8
+
+div_bear_1 = close_HH1 and rsi_LH1
+div_bear_2 = close_HH2 and rsi_LH2
+div_bear_3 = close_HH3 and rsi_LH3
+div_bear_4 = close_HH4 and rsi_LH4
+div_bear_5 = close_HH5 and rsi_LH5
+div_bear_6 = close_HH6 and rsi_LH6
+div_bear_7 = close_HH7 and rsi_LH7
+div_bear_8 = close_HH8 and rsi_LH8
+
+// ══════════════════════════════════════════════════════════════════
+// HIDDEN BULLISH DIVERGENCE — price HL, RSI LL
+// ══════════════════════════════════════════════════════════════════
+close_HL1 = ll0 > ll1
+rsi_LL1   = rsil0 < rsil1
+
+close_HL2 = ll0 > ll2 and ll1 > ll0 and ll1 > (ll2_ - ((ll0 - ll2_) * m))
+rsi_LL2   = rsil0 < rsil2 and rsil1 > rsil0
+
+close_HL3 = ll0 > ll3 and ll1 > ll0 and ll1 > (ll3_ - ((ll0 - ll3_) * m)) and ll2 > ll0 and ll2 > (ll3_ - ((ll0 - ll3_) * m))
+rsi_LL3   = rsil0 < rsil3 and rsil1 > rsil0 and rsil2 > rsil0
+
+close_HL4 = ll0 > ll4 and ll1 > ll0 and ll1 > (ll4_ - ((ll0 - ll4_) * m)) and ll2 > ll0 and ll2 > (ll4_ - ((ll4_ - ll0) * m)) and ll3 > ll0 and ll3 > (ll4_ - ((ll0 - ll4_) * m))
+rsi_LL4   = rsil0 < rsil4 and rsil1 > rsil0 and rsil2 > rsil0 and rsil3 > rsil0
+
+close_HL5 = ll0 > ll5 and ll1 > ll0 and ll1 > (ll5_ - ((ll0 - ll5_) * m)) and ll2 > ll0 and ll2 > (ll5_ - ((ll0 - ll5_) * m)) and ll3 > ll0 and ll3 > (ll5_ - ((ll0 - ll5_) * m)) and ll4 > ll0 and ll4 > (ll5_ - ((ll0 - ll5_) * m))
+rsi_LL5   = rsil0 < rsil5 and rsil1 > rsil0 and rsil2 > rsil0 and rsil3 > rsil0 and rsil4 > rsil0
+
+close_HL6 = ll0 > ll6 and ll1 > ll0 and ll1 > (ll6_ - ((ll0 - ll6_) * m)) and ll2 > ll0 and ll2 > (ll6_ - ((ll0 - ll6_) * m)) and ll3 > ll0 and ll3 > (ll6_ - ((ll6_ - ll0) * m)) and ll4 > ll0 and ll4 > (ll6_ - ((ll0 - ll6_) * m)) and ll5 > ll0 and ll5 > (ll6_ - ((ll0 - ll6_) * m))
+rsi_LL6   = rsil0 < rsil6 and rsil1 > rsil0 and rsil2 > rsil0 and rsil3 > rsil0 and rsil4 > rsil0 and rsil5 > rsil0
+
+close_HL7 = ll0 > ll7 and ll1 > ll0 and ll1 > (ll7_ - ((ll0 - ll7_) * m)) and ll2 > ll0 and ll2 > (ll7_ - ((ll0 - ll7_) * m)) and ll3 > ll0 and ll3 > (ll7_ - ((ll0 - ll7_) * m)) and ll4 > ll0 and ll4 > (ll7_ - ((ll0 - ll7_) * m)) and ll5 > ll0 and ll5 > (ll7_ - ((ll0 - ll7_) * m)) and ll6 > ll0 and ll6 > (ll7_ - ((ll0 - ll7_) * m))
+rsi_LL7   = rsil0 < rsil7 and rsil1 > rsil0 and rsil2 > rsil0 and rsil3 > rsil0 and rsil4 > rsil0 and rsil5 > rsil0 and rsil6 > rsil0
+
+close_HL8 = ll0 > ll8 and ll1 > ll0 and ll1 > (ll8_ - ((ll0 - ll8_) * m)) and ll2 > ll0 and ll2 > (ll8_ - ((ll8_ - ll0) * m)) and ll3 > ll0 and ll3 > (ll8_ - ((ll0 - ll8_) * m)) and ll4 > ll0 and ll4 > (ll8_ - ((ll0 - ll8_) * m)) and ll5 > ll0 and ll5 > (ll8_ - ((ll0 - ll8_) * m)) and ll6 > ll0 and ll6 > (ll8_ - ((ll0 - ll8_) * m)) and ll7 > ll0 and ll7 > (ll8_ - ((ll0 - ll8_) * m))
+rsi_LL8   = rsil0 < rsil8 and rsil1 > rsil0 and rsil2 > rsil0 and rsil3 > rsil0 and rsil4 > rsil0 and rsil5 > rsil0 and rsil6 > rsil0 and rsil7 > rsil0
+
+hid_div_bull_1 = close_HL1 and rsi_LL1
+hid_div_bull_2 = close_HL2 and rsi_LL2
+hid_div_bull_3 = close_HL3 and rsi_LL3
+hid_div_bull_4 = close_HL4 and rsi_LL4
+hid_div_bull_5 = close_HL5 and rsi_LL5
+hid_div_bull_6 = close_HL6 and rsi_LL6
+hid_div_bull_7 = close_HL7 and rsi_LL7
+hid_div_bull_8 = close_HL8 and rsi_LL8
+
+// ══════════════════════════════════════════════════════════════════
+// HIDDEN BEARISH DIVERGENCE — price LH, RSI HH
+// ══════════════════════════════════════════════════════════════════
+close_LH1 = hh0 < hh1
+rsi_HH1   = rsih0 > rsih1
+
+close_LH2 = hh0 < hh2 and hh1 < hh0 and hh1 < (hh2_ + ((hh2_ - hh0) * m))
+rsi_HH2   = rsih0 > rsih2 and rsih1 < rsih0
+
+close_LH3 = hh0 < hh3 and hh1 < hh0 and hh1 < (hh3_ + ((hh3_ - hh0) * m)) and hh2 < hh0 and hh2 < (hh3_ + ((hh3_ - hh0) * m))
+rsi_HH3   = rsih0 > rsih3 and rsih1 < rsih0 and rsih2 < rsih0
+
+close_LH4 = hh0 < hh4 and hh1 < hh0 and hh1 < (hh4_ + ((hh4_ - hh0) * m)) and hh2 < hh0 and hh2 < (hh4_ + ((hh4_ - hh0) * m)) and hh3 < hh0 and hh3 < (hh4_ + ((hh4_ - hh0) * m))
+rsi_HH4   = rsih0 > rsih4 and rsih1 < rsih0 and rsih2 < rsih0 and rsih3 < rsih0
+
+close_LH5 = hh0 < hh5 and hh1 < hh0 and hh1 < (hh5_ + ((hh5_ - hh0) * m)) and hh2 < hh0 and hh2 < (hh5_ + ((hh5_ - hh0) * m)) and hh3 < hh0 and hh3 < (hh5_ + ((hh5_ - hh0) * m)) and hh4 < hh0 and hh4 < (hh5_ + ((hh5_ - hh0) * m))
+rsi_HH5   = rsih0 > rsih5 and rsih1 < rsih0 and rsih2 < rsih0 and rsih3 < rsih0 and rsih4 < rsih0
+
+close_LH6 = hh0 < hh6 and hh1 < hh0 and hh1 < (hh6_ + ((hh6_ - hh0) * m)) and hh2 < hh0 and hh2 < (hh6_ + ((hh6_ - hh0) * m)) and hh3 < hh0 and hh3 < (hh6_ + ((hh6_ - hh0) * m)) and hh4 < hh0 and hh4 < (hh6_ + ((hh6_ - hh0) * m)) and hh5 < hh0 and hh5 < (hh6_ + ((hh6_ - hh0) * m))
+rsi_HH6   = rsih0 > rsih6 and rsih1 < rsih0 and rsih2 < rsih0 and rsih3 < rsih0 and rsih4 < rsih0 and rsih5 < rsih0
+
+close_LH7 = hh0 < hh7 and hh1 < hh0 and hh1 < (hh7_ + ((hh7_ - hh0) * m)) and hh2 < hh0 and hh2 < (hh7_ + ((hh7_ - hh0) * m)) and hh3 < hh0 and hh3 < (hh7_ + ((hh7_ - hh0) * m)) and hh4 < hh0 and hh4 < (hh7_ + ((hh7_ - hh0) * m)) and hh5 < hh0 and hh5 < (hh7_ + ((hh7_ - hh0) * m)) and hh6 < hh0 and hh6 < (hh7_ + ((hh7_ - hh0) * m))
+rsi_HH7   = rsih0 > rsih7 and rsih1 < rsih0 and rsih2 < rsih0 and rsih3 < rsih0 and rsih4 < rsih0 and rsih5 < rsih0 and rsih6 < rsih0
+
+close_LH8 = hh0 < hh8 and hh1 < hh0 and hh1 < (hh8_ + ((hh8_ - hh0) * m)) and hh2 < hh0 and hh2 < (hh8_ + ((hh8_ - hh0) * m)) and hh3 < hh0 and hh3 < (hh8_ + ((hh8_ - hh0) * m)) and hh4 < hh0 and hh4 < (hh8_ + ((hh8_ - hh0) * m)) and hh5 < hh0 and hh5 < (hh8_ + ((hh8_ - hh0) * m)) and hh6 < hh0 and hh6 < (hh8_ + ((hh8_ - hh0) * m)) and hh7 < hh0 and hh7 < (hh8_ + ((hh8_ - hh0) * m))
+rsi_HH8   = rsih0 > rsih8 and rsih1 < rsih0 and rsih2 < rsih0 and rsih3 < rsih0 and rsih4 < rsih0 and rsih5 < rsih0 and rsih6 < rsih0 and rsih7 < rsih0
+
+hid_div_bear_1 = close_LH1 and rsi_HH1
+hid_div_bear_2 = close_LH2 and rsi_HH2
+hid_div_bear_3 = close_LH3 and rsi_HH3
+hid_div_bear_4 = close_LH4 and rsi_HH4
+hid_div_bear_5 = close_LH5 and rsi_HH5
+hid_div_bear_6 = close_LH6 and rsi_HH6
+hid_div_bear_7 = close_LH7 and rsi_HH7
+hid_div_bear_8 = close_LH8 and rsi_HH8
+
+// ══════════════════════════════════════════════════════════════════
+// SIGNAL MARKERS — on the RSI pane
+// Only fire on first bar of detection (not div[1]) to avoid repeats.
+// Longest span wins (div_8 suppresses 1-7, etc.)
+// ══════════════════════════════════════════════════════════════════
+
+// Regular bullish (plotchar below RSI value)
+plotchar(show_div and div_bull_1 and not div_bull_1[1] and not div_bull_2 and not div_bull_3 and not div_bull_4 and not div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8 ? rsil0 - 3 : na, char="B", title="Bull 1", location=location.absolute, color=color.green, size=size.tiny)
+plotchar(show_div and div_bull_2 and not div_bull_2[1] and not div_bull_3 and not div_bull_4 and not div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8 ? rsil0 - 3 : na, char="B", title="Bull 2", location=location.absolute, color=color.green, size=size.tiny)
+plotchar(show_div and div_bull_3 and not div_bull_3[1] and not div_bull_4 and not div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8 ? rsil0 - 3 : na, char="B", title="Bull 3", location=location.absolute, color=color.green, size=size.tiny)
+plotchar(show_div and div_bull_4 and not div_bull_4[1] and not div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8 ? rsil0 - 3 : na, char="B", title="Bull 4", location=location.absolute, color=color.lime, size=size.tiny)
+plotchar(show_div and div_bull_5 and not div_bull_5[1] and not div_bull_6 and not div_bull_7 and not div_bull_8 ? rsil0 - 3 : na, char="B", title="Bull 5", location=location.absolute, color=color.lime, size=size.tiny)
+plotchar(show_div and div_bull_6 and not div_bull_6[1] and not div_bull_7 and not div_bull_8 ? rsil0 - 3 : na, char="B", title="Bull 6", location=location.absolute, color=color.lime, size=size.tiny)
+plotchar(show_div and div_bull_7 and not div_bull_7[1] and not div_bull_8 ? rsil0 - 3 : na, char="B", title="Bull 7", location=location.absolute, color=color.aqua, size=size.tiny)
+plotchar(show_div and div_bull_8 and not div_bull_8[1] ? rsil0 - 3 : na, char="B", title="Bull 8", location=location.absolute, color=color.aqua, size=size.tiny)
+
+// Regular bearish (plotchar above RSI value)
+plotchar(show_div and div_bear_1 and not div_bear_1[1] and not div_bear_2 and not div_bear_3 and not div_bear_4 and not div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8 ? rsih0 + 3 : na, char="S", title="Bear 1", location=location.absolute, color=color.orange, size=size.tiny)
+plotchar(show_div and div_bear_2 and not div_bear_2[1] and not div_bear_3 and not div_bear_4 and not div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8 ? rsih0 + 3 : na, char="S", title="Bear 2", location=location.absolute, color=color.orange, size=size.tiny)
+plotchar(show_div and div_bear_3 and not div_bear_3[1] and not div_bear_4 and not div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8 ? rsih0 + 3 : na, char="S", title="Bear 3", location=location.absolute, color=color.orange, size=size.tiny)
+plotchar(show_div and div_bear_4 and not div_bear_4[1] and not div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8 ? rsih0 + 3 : na, char="S", title="Bear 4", location=location.absolute, color=color.red, size=size.tiny)
+plotchar(show_div and div_bear_5 and not div_bear_5[1] and not div_bear_6 and not div_bear_7 and not div_bear_8 ? rsih0 + 3 : na, char="S", title="Bear 5", location=location.absolute, color=color.red, size=size.tiny)
+plotchar(show_div and div_bear_6 and not div_bear_6[1] and not div_bear_7 and not div_bear_8 ? rsih0 + 3 : na, char="S", title="Bear 6", location=location.absolute, color=color.red, size=size.tiny)
+plotchar(show_div and div_bear_7 and not div_bear_7[1] and not div_bear_8 ? rsih0 + 3 : na, char="S", title="Bear 7", location=location.absolute, color=color.purple, size=size.tiny)
+plotchar(show_div and div_bear_8 and not div_bear_8[1] ? rsih0 + 3 : na, char="S", title="Bear 8", location=location.absolute, color=color.purple, size=size.tiny)
+
+// Hidden bullish
+plotchar(show_hid and hid_div_bull_1 and not hid_div_bull_1[1] and not hid_div_bull_2 and not hid_div_bull_3 and not hid_div_bull_4 and not hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8 ? rsil0 - 3 : na, char="H", title="Hid Bull 1", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bull_2 and not hid_div_bull_2[1] and not hid_div_bull_3 and not hid_div_bull_4 and not hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8 ? rsil0 - 3 : na, char="H", title="Hid Bull 2", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bull_3 and not hid_div_bull_3[1] and not hid_div_bull_4 and not hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8 ? rsil0 - 3 : na, char="H", title="Hid Bull 3", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bull_4 and not hid_div_bull_4[1] and not hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8 ? rsil0 - 3 : na, char="H", title="Hid Bull 4", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bull_5 and not hid_div_bull_5[1] and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8 ? rsil0 - 3 : na, char="H", title="Hid Bull 5", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bull_6 and not hid_div_bull_6[1] and not hid_div_bull_7 and not hid_div_bull_8 ? rsil0 - 3 : na, char="H", title="Hid Bull 6", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bull_7 and not hid_div_bull_7[1] and not hid_div_bull_8 ? rsil0 - 3 : na, char="H", title="Hid Bull 7", location=location.absolute, color=color.yellow, size=size.tiny)
+plotchar(show_hid and hid_div_bull_8 and not hid_div_bull_8[1] ? rsil0 - 3 : na, char="H", title="Hid Bull 8", location=location.absolute, color=color.yellow, size=size.tiny)
+
+// Hidden bearish
+plotchar(show_hid and hid_div_bear_1 and not hid_div_bear_1[1] and not hid_div_bear_2 and not hid_div_bear_3 and not hid_div_bear_4 and not hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8 ? rsih0 + 3 : na, char="H", title="Hid Bear 1", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bear_2 and not hid_div_bear_2[1] and not hid_div_bear_3 and not hid_div_bear_4 and not hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8 ? rsih0 + 3 : na, char="H", title="Hid Bear 2", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bear_3 and not hid_div_bear_3[1] and not hid_div_bear_4 and not hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8 ? rsih0 + 3 : na, char="H", title="Hid Bear 3", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bear_4 and not hid_div_bear_4[1] and not hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8 ? rsih0 + 3 : na, char="H", title="Hid Bear 4", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bear_5 and not hid_div_bear_5[1] and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8 ? rsih0 + 3 : na, char="H", title="Hid Bear 5", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bear_6 and not hid_div_bear_6[1] and not hid_div_bear_7 and not hid_div_bear_8 ? rsih0 + 3 : na, char="H", title="Hid Bear 6", location=location.absolute, color=color.white, size=size.tiny)
+plotchar(show_hid and hid_div_bear_7 and not hid_div_bear_7[1] and not hid_div_bear_8 ? rsih0 + 3 : na, char="H", title="Hid Bear 7", location=location.absolute, color=color.yellow, size=size.tiny)
+plotchar(show_hid and hid_div_bear_8 and not hid_div_bear_8[1] ? rsih0 + 3 : na, char="H", title="Hid Bear 8", location=location.absolute, color=color.yellow, size=size.tiny)
+
+// Pivot labels on RSI
+plotshape(show_piv ? rh : na, style=shape.labeldown, text="pH", textcolor=color.white, location=location.absolute, color=color.new(color.red, 85), size=size.tiny, offset=-RB, title="RSI Pivot High")
+plotshape(show_piv ? rl : na, style=shape.labelup,  text="pL", textcolor=color.white, location=location.absolute, color=color.new(color.green, 85), size=size.tiny, offset=-RB, title="RSI Pivot Low")
+
+// ══════════════════════════════════════════════════════════════════
+// DIVERGENCE LINES — drawn on the RSI pane
+// Find bar offsets for each pivot occurrence, then draw lines
+// between RSI values at the two divergence endpoints.
+// ══════════════════════════════════════════════════════════════════
+
+// --- Bar-offset counters for line endpoints ---
+// bl_N = offset to most recent pivot (endpoint 0), blN = offset to older pivot (endpoint N)
+bl1 = 0, bl_1 = 0, bl2 = 0, bl_2 = 0, bl3 = 0, bl_3 = 0, bl4 = 0, bl_4 = 0
+bl5 = 0, bl_5 = 0, bl6 = 0, bl_6 = 0, bl7 = 0, bl_7 = 0, bl8 = 0, bl_8 = 0
+br1 = 0, br_1 = 0, br2 = 0, br_2 = 0, br3 = 0, br_3 = 0, br4 = 0, br_4 = 0
+br5 = 0, br_5 = 0, br6 = 0, br_6 = 0, br7 = 0, br_7 = 0, br8 = 0, br_8 = 0
+hbl1 = 0, hbl_1 = 0, hbl2 = 0, hbl_2 = 0, hbl3 = 0, hbl_3 = 0, hbl4 = 0, hbl_4 = 0
+hbl5 = 0, hbl_5 = 0, hbl6 = 0, hbl_6 = 0, hbl7 = 0, hbl_7 = 0, hbl8 = 0, hbl_8 = 0
+hbr1 = 0, hbr_1 = 0, hbr2 = 0, hbr_2 = 0, hbr3 = 0, hbr_3 = 0, hbr4 = 0, hbr_4 = 0
+hbr5 = 0, hbr_5 = 0, hbr6 = 0, hbr_6 = 0, hbr7 = 0, hbr_7 = 0, hbr8 = 0, hbr_8 = 0
+
+// Find the recent endpoint (pivot 0) bar offset
+for i = 0 to 1
+    if div_bull_1 and nwl[i] == ll0
+        break
+    bl_1 += 1
+    if div_bull_2 and nwl[i] == ll0
+        break
+    bl_2 += 1
+    if div_bull_3 and nwl[i] == ll0
+        break
+    bl_3 += 1
+    if div_bull_4 and nwl[i] == ll0
+        break
+    bl_4 += 1
+    if div_bull_5 and nwl[i] == ll0
+        break
+    bl_5 += 1
+    if div_bull_6 and nwl[i] == ll0
+        break
+    bl_6 += 1
+    if div_bull_7 and nwl[i] == ll0
+        break
+    bl_7 += 1
+    if div_bull_8 and nwl[i] == ll0
+        break
+    bl_8 += 1
+    if hid_div_bull_1 and nwl[i] == ll0
+        break
+    hbl_1 += 1
+    if hid_div_bull_2 and nwl[i] == ll0
+        break
+    hbl_2 += 1
+    if hid_div_bull_3 and nwl[i] == ll0
+        break
+    hbl_3 += 1
+    if hid_div_bull_4 and nwl[i] == ll0
+        break
+    hbl_4 += 1
+    if hid_div_bull_5 and nwl[i] == ll0
+        break
+    hbl_5 += 1
+    if hid_div_bull_6 and nwl[i] == ll0
+        break
+    hbl_6 += 1
+    if hid_div_bull_7 and nwl[i] == ll0
+        break
+    hbl_7 += 1
+    if hid_div_bull_8 and nwl[i] == ll0
+        break
+    hbl_8 += 1
+
+for i = 0 to 1
+    if div_bear_1 and nwh[i] == hh0
+        break
+    br_1 += 1
+    if div_bear_2 and nwh[i] == hh0
+        break
+    br_2 += 1
+    if div_bear_3 and nwh[i] == hh0
+        break
+    br_3 += 1
+    if div_bear_4 and nwh[i] == hh0
+        break
+    br_4 += 1
+    if div_bear_5 and nwh[i] == hh0
+        break
+    br_5 += 1
+    if div_bear_6 and nwh[i] == hh0
+        break
+    br_6 += 1
+    if div_bear_7 and nwh[i] == hh0
+        break
+    br_7 += 1
+    if div_bear_8 and nwh[i] == hh0
+        break
+    br_8 += 1
+    if hid_div_bear_1 and nwh[i] == hh0
+        break
+    hbr_1 += 1
+    if hid_div_bear_2 and nwh[i] == hh0
+        break
+    hbr_2 += 1
+    if hid_div_bear_3 and nwh[i] == hh0
+        break
+    hbr_3 += 1
+    if hid_div_bear_4 and nwh[i] == hh0
+        break
+    hbr_4 += 1
+    if hid_div_bear_5 and nwh[i] == hh0
+        break
+    hbr_5 += 1
+    if hid_div_bear_6 and nwh[i] == hh0
+        break
+    hbr_6 += 1
+    if hid_div_bear_7 and nwh[i] == hh0
+        break
+    hbr_7 += 1
+    if hid_div_bear_8 and nwh[i] == hh0
+        break
+    hbr_8 += 1
+
+// Find the older endpoint bar offsets (searching further back)
+for i = 0 to 50
+    if div_bull_1 and nwl[i] == ll1
+        break
+    bl1 += 1
+    if hid_div_bull_1 and nwl[i] == ll1
+        break
+    hbl1 += 1
+for i = 0 to 100
+    if div_bull_2 and nwl[i] == ll2
+        break
+    bl2 += 1
+    if hid_div_bull_2 and nwl[i] == ll2
+        break
+    hbl2 += 1
+for i = 0 to 150
+    if div_bull_3 and nwl[i] == ll3
+        break
+    bl3 += 1
+    if hid_div_bull_3 and nwl[i] == ll3
+        break
+    hbl3 += 1
+for i = 0 to 200
+    if div_bull_4 and nwl[i] == ll4
+        break
+    bl4 += 1
+    if hid_div_bull_4 and nwl[i] == ll4
+        break
+    hbl4 += 1
+for i = 0 to 200
+    if div_bull_5 and nwl[i] == ll5
+        break
+    bl5 += 1
+    if hid_div_bull_5 and nwl[i] == ll5
+        break
+    hbl5 += 1
+for i = 0 to 300
+    if div_bull_6 and nwl[i] == ll6
+        break
+    bl6 += 1
+    if hid_div_bull_6 and nwl[i] == ll6
+        break
+    hbl6 += 1
+for i = 0 to 400
+    if div_bull_7 and nwl[i] == ll7
+        break
+    bl7 += 1
+    if hid_div_bull_7 and nwl[i] == ll7
+        break
+    hbl7 += 1
+for i = 0 to 500
+    if div_bull_8 and nwl[i] == ll8
+        break
+    bl8 += 1
+    if hid_div_bull_8 and nwl[i] == ll8
+        break
+    hbl8 += 1
+
+for i = 0 to 50
+    if div_bear_1 and nwh[i] == hh1
+        break
+    br1 += 1
+    if hid_div_bear_1 and nwh[i] == hh1
+        break
+    hbr1 += 1
+for i = 0 to 100
+    if div_bear_2 and nwh[i] == hh2
+        break
+    br2 += 1
+    if hid_div_bear_2 and nwh[i] == hh2
+        break
+    hbr2 += 1
+for i = 0 to 150
+    if div_bear_3 and nwh[i] == hh3
+        break
+    br3 += 1
+    if hid_div_bear_3 and nwh[i] == hh3
+        break
+    hbr3 += 1
+for i = 0 to 200
+    if div_bear_4 and nwh[i] == hh4
+        break
+    br4 += 1
+    if hid_div_bear_4 and nwh[i] == hh4
+        break
+    hbr4 += 1
+for i = 0 to 200
+    if div_bear_5 and nwh[i] == hh5
+        break
+    br5 += 1
+    if hid_div_bear_5 and nwh[i] == hh5
+        break
+    hbr5 += 1
+for i = 0 to 300
+    if div_bear_6 and nwh[i] == hh6
+        break
+    br6 += 1
+    if hid_div_bear_6 and nwh[i] == hh6
+        break
+    hbr6 += 1
+for i = 0 to 400
+    if div_bear_7 and nwh[i] == hh7
+        break
+    br7 += 1
+    if hid_div_bear_7 and nwh[i] == hh7
+        break
+    hbr7 += 1
+for i = 0 to 500
+    if div_bear_8 and nwh[i] == hh8
+        break
+    br8 += 1
+    if hid_div_bear_8 and nwh[i] == hh8
+        break
+    hbr8 += 1
+
+// ── Draw divergence lines on RSI ──────────────────────────────────
+// Regular bullish — longest span wins
+if show_div and div_bull_8
+    l = line.new(bar_index[bl_8], rsil0, bar_index[bl8], rsil8, color=color.aqua, width=lw)
+    line.delete(not pl ? l : na)
+else if show_div and div_bull_7 and not div_bull_8
+    l = line.new(bar_index[bl_7], rsil0, bar_index[bl7], rsil7, color=color.aqua, width=lw)
+    line.delete(not pl ? l : na)
+else if show_div and div_bull_6 and not div_bull_7 and not div_bull_8
+    l = line.new(bar_index[bl_6], rsil0, bar_index[bl6], rsil6, color=color.lime, width=lw)
+    line.delete(not pl ? l : na)
+else if show_div and div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8
+    l = line.new(bar_index[bl_5], rsil0, bar_index[bl5], rsil5, color=color.lime, width=lw)
+    line.delete(not pl ? l : na)
+else if show_div and div_bull_4 and not div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8
+    l = line.new(bar_index[bl_4], rsil0, bar_index[bl4], rsil4, color=color.lime, width=lw)
+    line.delete(not pl ? l : na)
+else if show_div and div_bull_3 and not div_bull_4 and not div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8
+    l = line.new(bar_index[bl_3], rsil0, bar_index[bl3], rsil3, color=color.green, width=lw)
+    line.delete(not pl ? l : na)
+else if show_div and div_bull_2 and not div_bull_3 and not div_bull_4 and not div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8
+    l = line.new(bar_index[bl_2], rsil0, bar_index[bl2], rsil2, color=color.green, width=lw)
+    line.delete(not pl ? l : na)
+else if show_div and div_bull_1 and not div_bull_2 and not div_bull_3 and not div_bull_4 and not div_bull_5 and not div_bull_6 and not div_bull_7 and not div_bull_8
+    l = line.new(bar_index[bl_1], rsil0, bar_index[bl1], rsil1, color=color.green, width=lw)
+    line.delete(not pl ? l : na)
+
+// Regular bearish
+if show_div and div_bear_8
+    l = line.new(bar_index[br_8], rsih0, bar_index[br8], rsih8, color=color.purple, width=lw)
+    line.delete(not ph ? l : na)
+else if show_div and div_bear_7 and not div_bear_8
+    l = line.new(bar_index[br_7], rsih0, bar_index[br7], rsih7, color=color.purple, width=lw)
+    line.delete(not ph ? l : na)
+else if show_div and div_bear_6 and not div_bear_7 and not div_bear_8
+    l = line.new(bar_index[br_6], rsih0, bar_index[br6], rsih6, color=color.red, width=lw)
+    line.delete(not ph ? l : na)
+else if show_div and div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8
+    l = line.new(bar_index[br_5], rsih0, bar_index[br5], rsih5, color=color.red, width=lw)
+    line.delete(not ph ? l : na)
+else if show_div and div_bear_4 and not div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8
+    l = line.new(bar_index[br_4], rsih0, bar_index[br4], rsih4, color=color.red, width=lw)
+    line.delete(not ph ? l : na)
+else if show_div and div_bear_3 and not div_bear_4 and not div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8
+    l = line.new(bar_index[br_3], rsih0, bar_index[br3], rsih3, color=color.orange, width=lw)
+    line.delete(not ph ? l : na)
+else if show_div and div_bear_2 and not div_bear_3 and not div_bear_4 and not div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8
+    l = line.new(bar_index[br_2], rsih0, bar_index[br2], rsih2, color=color.orange, width=lw)
+    line.delete(not ph ? l : na)
+else if show_div and div_bear_1 and not div_bear_2 and not div_bear_3 and not div_bear_4 and not div_bear_5 and not div_bear_6 and not div_bear_7 and not div_bear_8
+    l = line.new(bar_index[br_1], rsih0, bar_index[br1], rsih1, color=color.orange, width=lw)
+    line.delete(not ph ? l : na)
+
+// Hidden bullish
+if show_hid and hid_div_bull_8
+    l = line.new(bar_index[hbl_8], rsil0, bar_index[hbl8], rsil8, color=color.yellow, width=lw, style=line.style_dashed)
+    line.delete(not pl ? l : na)
+else if show_hid and hid_div_bull_7 and not hid_div_bull_8
+    l = line.new(bar_index[hbl_7], rsil0, bar_index[hbl7], rsil7, color=color.yellow, width=lw, style=line.style_dashed)
+    line.delete(not pl ? l : na)
+else if show_hid and hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8
+    l = line.new(bar_index[hbl_6], rsil0, bar_index[hbl6], rsil6, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not pl ? l : na)
+else if show_hid and hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8
+    l = line.new(bar_index[hbl_5], rsil0, bar_index[hbl5], rsil5, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not pl ? l : na)
+else if show_hid and hid_div_bull_4 and not hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8
+    l = line.new(bar_index[hbl_4], rsil0, bar_index[hbl4], rsil4, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not pl ? l : na)
+else if show_hid and hid_div_bull_3 and not hid_div_bull_4 and not hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8
+    l = line.new(bar_index[hbl_3], rsil0, bar_index[hbl3], rsil3, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not pl ? l : na)
+else if show_hid and hid_div_bull_2 and not hid_div_bull_3 and not hid_div_bull_4 and not hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8
+    l = line.new(bar_index[hbl_2], rsil0, bar_index[hbl2], rsil2, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not pl ? l : na)
+else if show_hid and hid_div_bull_1 and not hid_div_bull_2 and not hid_div_bull_3 and not hid_div_bull_4 and not hid_div_bull_5 and not hid_div_bull_6 and not hid_div_bull_7 and not hid_div_bull_8
+    l = line.new(bar_index[hbl_1], rsil0, bar_index[hbl1], rsil1, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not pl ? l : na)
+
+// Hidden bearish
+if show_hid and hid_div_bear_8
+    l = line.new(bar_index[hbr_8], rsih0, bar_index[hbr8], rsih8, color=color.yellow, width=lw, style=line.style_dashed)
+    line.delete(not ph ? l : na)
+else if show_hid and hid_div_bear_7 and not hid_div_bear_8
+    l = line.new(bar_index[hbr_7], rsih0, bar_index[hbr7], rsih7, color=color.yellow, width=lw, style=line.style_dashed)
+    line.delete(not ph ? l : na)
+else if show_hid and hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8
+    l = line.new(bar_index[hbr_6], rsih0, bar_index[hbr6], rsih6, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not ph ? l : na)
+else if show_hid and hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8
+    l = line.new(bar_index[hbr_5], rsih0, bar_index[hbr5], rsih5, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not ph ? l : na)
+else if show_hid and hid_div_bear_4 and not hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8
+    l = line.new(bar_index[hbr_4], rsih0, bar_index[hbr4], rsih4, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not ph ? l : na)
+else if show_hid and hid_div_bear_3 and not hid_div_bear_4 and not hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8
+    l = line.new(bar_index[hbr_3], rsih0, bar_index[hbr3], rsih3, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not ph ? l : na)
+else if show_hid and hid_div_bear_2 and not hid_div_bear_3 and not hid_div_bear_4 and not hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8
+    l = line.new(bar_index[hbr_2], rsih0, bar_index[hbr2], rsih2, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not ph ? l : na)
+else if show_hid and hid_div_bear_1 and not hid_div_bear_2 and not hid_div_bear_3 and not hid_div_bear_4 and not hid_div_bear_5 and not hid_div_bear_6 and not hid_div_bear_7 and not hid_div_bear_8
+    l = line.new(bar_index[hbr_1], rsih0, bar_index[hbr1], rsih1, color=color.white, width=lw, style=line.style_dashed)
+    line.delete(not ph ? l : na)
+
+// ══════════════════════════════════════════════════════════════════
+// RSI PLOT + LEVELS
+// ══════════════════════════════════════════════════════════════════
 plot(rsi, "RSI", color.white, 2)
-hline(70, "Overbought",  color.new(color.red, 70),   linestyle=hline.style_dotted)
-hline(50, "Midline",     color.white,                  linestyle=hline.style_solid)
-hline(30, "Oversold",    color.new(color.green, 70),  linestyle=hline.style_dotted)
-neutralUpper = plot(neutralHi, "Neutral Hi", color.new(color.gray, 90))
-neutralLower = plot(neutralLo, "Neutral Lo", color.new(color.gray, 90))
-fill(neutralUpper, neutralLower, color.new(color.yellow, 92), title="Neutral Zone")
-// ── Alerts ──────────────────────────────────────────────────────
-alertcondition(bullDiv, "Bullish RSI Divergence", "Bullish RSI divergence detected after neutral reset")
-alertcondition(bearDiv, "Bearish RSI Divergence", "Bearish RSI divergence detected after neutral reset")
+hline(70, "Overbought", color.new(color.red, 70),   linestyle=hline.style_dotted)
+hline(50, "Midline",     color.new(color.gray, 80),  linestyle=hline.style_solid)
+hline(30, "Oversold",   color.new(color.green, 70),  linestyle=hline.style_dotted)
+
+// ══════════════════════════════════════════════════════════════════
+// ALERTS
+// ══════════════════════════════════════════════════════════════════
+any_bull = div_bull_1 or div_bull_2 or div_bull_3 or div_bull_4 or div_bull_5 or div_bull_6 or div_bull_7 or div_bull_8
+any_bear = div_bear_1 or div_bear_2 or div_bear_3 or div_bear_4 or div_bear_5 or div_bear_6 or div_bear_7 or div_bear_8
+any_hid_bull = hid_div_bull_1 or hid_div_bull_2 or hid_div_bull_3 or hid_div_bull_4 or hid_div_bull_5 or hid_div_bull_6 or hid_div_bull_7 or hid_div_bull_8
+any_hid_bear = hid_div_bear_1 or hid_div_bear_2 or hid_div_bear_3 or hid_div_bear_4 or hid_div_bear_5 or hid_div_bear_6 or hid_div_bear_7 or hid_div_bear_8
+
+alertcondition(any_bull, "Bullish RSI Divergence", "Regular bullish RSI divergence detected")
+alertcondition(any_bear, "Bearish RSI Divergence", "Regular bearish RSI divergence detected")
+alertcondition(any_hid_bull, "Hidden Bullish RSI Divergence", "Hidden bullish RSI divergence detected")
+alertcondition(any_hid_bear, "Hidden Bearish RSI Divergence", "Hidden bearish RSI divergence detected")
