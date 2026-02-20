@@ -94,30 +94,6 @@ export default function AnalysisPanel() {
         </div>
       )}
 
-      {/* RSI Divergences */}
-      <div>
-        <h4 className="text-white font-medium mb-2">
-          RSI Divergences
-          <span className="text-gray-500 font-normal ml-2">({analysis.divergences.length})</span>
-        </h4>
-        {analysis.divergences.length === 0 ? (
-          <span className="text-gray-500 text-xs">None detected</span>
-        ) : (
-          <div className="space-y-1">
-            {analysis.divergences.slice(-5).map((div, i) => (
-              <div key={i} className="flex justify-between text-xs">
-                <span className={div.type === 'bullish' ? 'text-green-400' : 'text-red-400'}>
-                  {div.type === 'bullish' ? 'BULL' : 'BEAR'} DIV
-                </span>
-                <span className="text-gray-400">
-                  RSI {div.prevRsi.toFixed(1)} &rarr; {div.rsi.toFixed(1)}
-                </span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-
       {/* SFPs */}
       <div>
         <h4 className="text-white font-medium mb-2">

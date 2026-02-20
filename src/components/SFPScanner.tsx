@@ -17,13 +17,6 @@ const CANDLE_LOOKBACK: { value: number; label: string }[] = [
   { value: 4, label: '+3' },
 ];
 
-const MCAP_FILTERS: { value: number; label: string }[] = [
-  { value: 0, label: 'All' },
-  { value: 100_000_000, label: '$100M+' },
-  { value: 500_000_000, label: '$500M+' },
-  { value: 1_000_000_000, label: '$1B+' },
-];
-
 const BATCH_SIZE = 5;
 const BATCH_DELAY_MS = 300; // delay between batches to avoid rate limits
 
@@ -37,13 +30,15 @@ type DebugData = Record<string, any>;
 export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
   const [timeframe, setTimeframe] = useState<Timeframe>('1w');
   const [recentCandles, setRecentCandles] = useState(2);
-  const [minMcap, setMinMcap] = useState(0);
   const [scanning, setScanning] = useState(false);
   const [progress, setProgress] = useState({ scanned: 0, total: 0, found: 0 });
   const [results, setResults] = useState<ScannerResult[]>([]);
+  const [mcapData, setMcapData] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
   const [hasScanned, setHasScanned] = useState(false);
   const [filter, setFilter] = useState<'all' | 'bullish' | 'bearish'>('all');
+  const [sortCol, setSortCol] = useState<'type' | 'wick' | 'mcap'>('type');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const cancelRef = useRef(false);
 
   // Debug state
@@ -75,27 +70,21 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
         return;
       }
 
-      let allCoins: string[] = assetsData.assets.map((a: { name: string }) => a.name);
+      const allCoins: string[] = assetsData.assets.map((a: { name: string }) => a.name);
 
-      // Filter by market cap if a minimum is set
-      if (minMcap > 0) {
-        try {
-          const mcapRes = await fetch('/api/market-data', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'mcaps' }),
-          });
-          const mcapData = await mcapRes.json();
-          if (mcapData.mcaps) {
-            const mcaps: Record<string, number> = mcapData.mcaps;
-            allCoins = allCoins.filter((coin) => {
-              const cap = mcaps[coin] ?? mcaps[coin.toUpperCase()] ?? 0;
-              return cap >= minMcap;
-            });
-          }
-        } catch {
-          // If mcap fetch fails, scan all coins
+      // Fetch market cap data for display in results
+      try {
+        const mcapRes = await fetch('/api/market-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'mcaps' }),
+        });
+        const mcapJson = await mcapRes.json();
+        if (mcapJson.mcaps) {
+          setMcapData(mcapJson.mcaps);
         }
+      } catch {
+        // Non-critical — table just won't show mcap
       }
 
       setProgress({ scanned: 0, total: allCoins.length, found: 0 });
@@ -143,7 +132,7 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     } finally {
       setScanning(false);
     }
-  }, [timeframe, recentCandles, minMcap]);
+  }, [timeframe, recentCandles]);
 
   const cancelScan = useCallback(() => {
     cancelRef.current = true;
@@ -180,13 +169,36 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
     return r.sfps.some((sfp) => sfp.type === filter);
   });
 
+  const handleSort = (col: 'type' | 'wick' | 'mcap') => {
+    if (sortCol === col) {
+      setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'));
+    } else {
+      setSortCol(col);
+      setSortDir('desc');
+    }
+  };
+
+  const getMcap = (coin: string): number => mcapData[coin] ?? mcapData[coin.toUpperCase()] ?? 0;
+
   const sortedResults = [...filteredResults].sort((a, b) => {
-    const aType = a.sfps[0]?.type === 'bearish' ? 0 : 1;
-    const bType = b.sfps[0]?.type === 'bearish' ? 0 : 1;
-    if (aType !== bType) return aType - bType;
-    const aWick = a.sfps[0] ? (a.sfps[0].wickDepth / a.sfps[0].sweptSwing.price) * 100 : 0;
-    const bWick = b.sfps[0] ? (b.sfps[0].wickDepth / b.sfps[0].sweptSwing.price) * 100 : 0;
-    return bWick - aWick;
+    let cmp = 0;
+    if (sortCol === 'type') {
+      const aType = a.sfps[0]?.type === 'bearish' ? 0 : 1;
+      const bType = b.sfps[0]?.type === 'bearish' ? 0 : 1;
+      cmp = aType - bType;
+      if (cmp === 0) {
+        const aWick = a.sfps[0] ? (a.sfps[0].wickDepth / a.sfps[0].sweptSwing.price) * 100 : 0;
+        const bWick = b.sfps[0] ? (b.sfps[0].wickDepth / b.sfps[0].sweptSwing.price) * 100 : 0;
+        cmp = bWick - aWick;
+      }
+    } else if (sortCol === 'wick') {
+      const aWick = a.sfps[0] ? (a.sfps[0].wickDepth / a.sfps[0].sweptSwing.price) * 100 : 0;
+      const bWick = b.sfps[0] ? (b.sfps[0].wickDepth / b.sfps[0].sweptSwing.price) * 100 : 0;
+      cmp = aWick - bWick;
+    } else if (sortCol === 'mcap') {
+      cmp = getMcap(a.coin) - getMcap(b.coin);
+    }
+    return sortDir === 'desc' ? -cmp : cmp;
   });
 
   const progressPercent = progress.total > 0 ? (progress.scanned / progress.total) * 100 : 0;
@@ -239,23 +251,6 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
               } disabled:opacity-50`}
             >
               {cb.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
-          {MCAP_FILTERS.map((mc) => (
-            <button
-              key={mc.value}
-              onClick={() => setMinMcap(mc.value)}
-              disabled={scanning}
-              className={`px-2.5 py-1.5 rounded text-xs font-medium transition-colors ${
-                minMcap === mc.value
-                  ? 'bg-cyan-500 text-white'
-                  : 'text-gray-400 hover:text-white hover:bg-gray-800'
-              } disabled:opacity-50`}
-            >
-              {mc.label}
             </button>
           ))}
         </div>
@@ -387,11 +382,27 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
             <thead>
               <tr className="text-gray-500 text-xs border-b border-gray-800">
                 <th className="text-left py-2 px-2 font-medium">Token</th>
-                <th className="text-left py-2 px-2 font-medium">Type</th>
+                <th
+                  className="text-left py-2 px-2 font-medium cursor-pointer hover:text-white transition-colors select-none"
+                  onClick={() => handleSort('type')}
+                >
+                  Type {sortCol === 'type' ? (sortDir === 'desc' ? '\u25BC' : '\u25B2') : ''}
+                </th>
                 <th className="text-left py-2 px-2 font-medium">When</th>
                 <th className="text-right py-2 px-2 font-medium">Price</th>
                 <th className="text-right py-2 px-2 font-medium">Swept</th>
-                <th className="text-right py-2 px-2 font-medium">Wick%</th>
+                <th
+                  className="text-right py-2 px-2 font-medium cursor-pointer hover:text-white transition-colors select-none"
+                  onClick={() => handleSort('wick')}
+                >
+                  Wick% {sortCol === 'wick' ? (sortDir === 'desc' ? '\u25BC' : '\u25B2') : ''}
+                </th>
+                <th
+                  className="text-right py-2 px-2 font-medium cursor-pointer hover:text-white transition-colors select-none"
+                  onClick={() => handleSort('mcap')}
+                >
+                  Mcap {sortCol === 'mcap' ? (sortDir === 'desc' ? '\u25BC' : '\u25B2') : ''}
+                </th>
                 <th className="text-left py-2 px-2 font-medium">Trend</th>
               </tr>
             </thead>
@@ -436,6 +447,9 @@ export default function SFPScanner({ onSelectCoin }: SFPScannerProps) {
                         <span className={isBullish ? 'text-green-400' : 'text-red-400'}>
                           {wickPct}%
                         </span>
+                      </td>
+                      <td className="py-2.5 px-2 text-right text-gray-400 font-mono text-xs">
+                        {formatMcap(getMcap(r.coin))}
                       </td>
                       <td className="py-2.5 px-2">
                         <span
@@ -629,4 +643,12 @@ function formatPrice(price: number): string {
   if (price >= 1) return price.toFixed(4);
   if (price >= 0.001) return price.toFixed(6);
   return price.toPrecision(4);
+}
+
+function formatMcap(mcap: number): string {
+  if (mcap === 0) return '—';
+  if (mcap >= 1e12) return `$${(mcap / 1e12).toFixed(1)}T`;
+  if (mcap >= 1e9) return `$${(mcap / 1e9).toFixed(1)}B`;
+  if (mcap >= 1e6) return `$${(mcap / 1e6).toFixed(0)}M`;
+  return `$${(mcap / 1e3).toFixed(0)}K`;
 }
