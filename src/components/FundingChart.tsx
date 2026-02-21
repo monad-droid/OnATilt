@@ -39,6 +39,8 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [fundingData, setFundingData] = useState<FundingRate[]>([]);
   const [priceData, setPriceData] = useState<Candle[]>([]);
   const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
+  const [crosshairPrices, setCrosshairPrices] = useState<{ trade: number; oracle: number; diff: number } | null>(null);
+  const isSyncing = useRef(false);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const raw = overrideCoin ?? coin;
@@ -180,6 +182,14 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     histogramSeries.setData(histogramData);
     chart.timeScale().fitContent();
 
+    // Sync zoom with price chart
+    chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
+      if (!logicalRange || isSyncing.current) return;
+      isSyncing.current = true;
+      priceChartRef.current?.timeScale().setVisibleLogicalRange(logicalRange);
+      isSyncing.current = false;
+    });
+
     // Handle resize
     const handleResize = () => {
       if (chartContainerRef.current && chartRef.current) {
@@ -292,6 +302,34 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     tradeSeries.setData(tradeData);
     oracleSeries.setData(oracleData);
     chart.timeScale().fitContent();
+
+    // Sync zoom with funding chart
+    chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
+      if (!logicalRange || isSyncing.current) return;
+      isSyncing.current = true;
+      chartRef.current?.timeScale().setVisibleLogicalRange(logicalRange);
+      isSyncing.current = false;
+    });
+
+    // Crosshair move: show trade/oracle/diff values
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time || !param.seriesData) {
+        setCrosshairPrices(null);
+        return;
+      }
+      const tradePoint = param.seriesData.get(tradeSeries) as { value?: number } | undefined;
+      const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
+      const trade = tradePoint?.value;
+      const oracle = oraclePoint?.value;
+      if (trade !== undefined && oracle !== undefined && oracle > 0) {
+        const diff = ((trade - oracle) / oracle) * 100;
+        setCrosshairPrices({ trade, oracle, diff });
+      } else if (trade !== undefined) {
+        setCrosshairPrices({ trade, oracle: 0, diff: 0 });
+      } else {
+        setCrosshairPrices(null);
+      }
+    });
 
     const handleResize = () => {
       if (priceChartContainerRef.current && priceChartRef.current) {
@@ -410,11 +448,22 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
                 <span className="text-gray-400">Trade</span>
+                {crosshairPrices && (
+                  <span className="text-[#06b6d4] font-medium">${crosshairPrices.trade.toFixed(4)}</span>
+                )}
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
                 <span className="text-gray-400">Oracle (est.)</span>
+                {crosshairPrices && crosshairPrices.oracle > 0 && (
+                  <span className="text-[#8b5cf6] font-medium">${crosshairPrices.oracle.toFixed(4)}</span>
+                )}
               </span>
+              {crosshairPrices && crosshairPrices.oracle > 0 && (
+                <span className={`font-medium ${crosshairPrices.diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  Diff: {crosshairPrices.diff >= 0 ? '+' : ''}{crosshairPrices.diff.toFixed(4)}%
+                </span>
+              )}
             </div>
           </div>
           <div ref={priceChartContainerRef} />
