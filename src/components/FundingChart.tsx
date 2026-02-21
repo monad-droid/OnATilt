@@ -29,9 +29,6 @@ function toTime(ms: number): UTCTimestamp {
 export default function FundingChart({ height = 600 }: FundingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const priceChartContainerRef = useRef<HTMLDivElement>(null);
-  const priceChartRef = useRef<IChartApi | null>(null);
-  const activeChart = useRef<'funding' | 'price' | null>(null);
 
   const [coin, setCoin] = useState('vntl:OPENAI');
   const [range, setRange] = useState<RangeOption>('30d');
@@ -125,7 +122,17 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     }
   }, [coin, range]);
 
-  // Render funding chart
+  // Build premium map from funding data for oracle estimate
+  const premiumMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const f of fundingData) {
+      const hourKey = Math.round(f.time / 3_600_000) * 3_600_000;
+      map.set(hourKey, parseFloat(f.premium));
+    }
+    return map;
+  }, [fundingData]);
+
+  // Single chart with two panes (v5 multi-pane: shared time scale, no sync needed)
   useEffect(() => {
     if (!chartContainerRef.current || fundingData.length === 0) return;
 
@@ -134,9 +141,11 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       chartRef.current = null;
     }
 
+    const chartHeight = priceData.length > 0 ? height - 50 : height - 200;
+
     const chart = createChart(chartContainerRef.current, {
       width: chartContainerRef.current.clientWidth,
-      height: height - 200,
+      height: chartHeight,
       layout: {
         background: { color: '#0a0a0f' },
         textColor: '#9ca3af',
@@ -162,13 +171,54 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
     chartRef.current = chart;
 
+    // --- Pane 0 (top): Price lines ---
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let tradeSeries: any = null;
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let oracleSeries: any = null;
+
+    if (priceData.length > 0) {
+      tradeSeries = chart.addSeries(LineSeries, {
+        color: '#06b6d4',
+        lineWidth: 2,
+        title: 'Trade',
+        priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
+      }, 0);
+
+      oracleSeries = chart.addSeries(LineSeries, {
+        color: '#8b5cf6',
+        lineWidth: 2,
+        title: 'Oracle (est.)',
+        priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
+      }, 0);
+
+      const tradeData = priceData.map(c => ({
+        time: toTime(c.time),
+        value: c.close,
+      }));
+
+      const oracleData = priceData
+        .map(c => {
+          const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
+          const premium = premiumMap.get(hourKey);
+          if (premium === undefined) return null;
+          return { time: toTime(c.time), value: c.close / (1 + premium) };
+        })
+        .filter((d): d is { time: UTCTimestamp; value: number } => d !== null);
+
+      tradeSeries.setData(tradeData);
+      oracleSeries.setData(oracleData);
+    }
+
+    // --- Pane 1 (bottom): Funding rate histogram ---
+    const fundingPane = priceData.length > 0 ? 1 : 0;
     const histogramSeries = chart.addSeries(HistogramSeries, {
       priceFormat: {
         type: 'price',
         precision: 6,
         minMove: 0.000001,
       },
-    });
+    }, fundingPane);
 
     const histogramData = fundingData.map(r => {
       const rate = parseFloat(r.fundingRate);
@@ -182,21 +232,32 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     histogramSeries.setData(histogramData);
     chart.timeScale().fitContent();
 
-    // Sync: only push to price chart when user is interacting with THIS chart
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      if (activeChart.current !== 'funding') return;
-      const tr = chart.timeScale().getVisibleRange();
-      if (!tr) return;
-      priceChartRef.current?.timeScale().setVisibleRange(tr);
-    });
-
+    // Crosshair: show all values from both panes
     chart.subscribeCrosshairMove((param) => {
       if (!param.time || !param.seriesData) {
         setCrosshairFundingRate(null);
+        setCrosshairPrices(null);
         return;
       }
-      const point = param.seriesData.get(histogramSeries) as { value?: number } | undefined;
-      setCrosshairFundingRate(point?.value ?? null);
+
+      // Funding rate
+      const fundingPoint = param.seriesData.get(histogramSeries) as { value?: number } | undefined;
+      setCrosshairFundingRate(fundingPoint?.value ?? null);
+
+      // Price
+      if (tradeSeries && oracleSeries) {
+        const tradePoint = param.seriesData.get(tradeSeries) as { value?: number } | undefined;
+        const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
+        const trade = tradePoint?.value;
+        const oracle = oraclePoint?.value;
+        if (trade !== undefined && oracle !== undefined && oracle > 0) {
+          setCrosshairPrices({ trade, oracle, diff: ((trade - oracle) / oracle) * 100 });
+        } else if (trade !== undefined) {
+          setCrosshairPrices({ trade, oracle: 0, diff: 0 });
+        } else {
+          setCrosshairPrices(null);
+        }
+      }
     });
 
     const handleResize = () => {
@@ -215,155 +276,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         chartRef.current = null;
       }
     };
-  }, [fundingData, height]);
-
-  // Build premium map from funding data for oracle estimate
-  const premiumMap = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const f of fundingData) {
-      const hourKey = Math.round(f.time / 3_600_000) * 3_600_000;
-      map.set(hourKey, parseFloat(f.premium));
-    }
-    return map;
-  }, [fundingData]);
-
-  // Render price chart with trade price + oracle estimate
-  useEffect(() => {
-    if (!priceChartContainerRef.current || priceData.length === 0) return;
-
-    if (priceChartRef.current) {
-      priceChartRef.current.remove();
-      priceChartRef.current = null;
-    }
-
-    const chart = createChart(priceChartContainerRef.current, {
-      width: priceChartContainerRef.current.clientWidth,
-      height: 250,
-      layout: {
-        background: { color: '#0a0a0f' },
-        textColor: '#9ca3af',
-        fontSize: 11,
-      },
-      grid: {
-        vertLines: { color: '#1f2937' },
-        horzLines: { color: '#1f2937' },
-      },
-      timeScale: {
-        timeVisible: true,
-        secondsVisible: false,
-        borderColor: '#374151',
-      },
-      rightPriceScale: {
-        borderColor: '#374151',
-      },
-      crosshair: {
-        horzLine: { color: '#4b5563' },
-        vertLine: { color: '#4b5563' },
-      },
-    });
-
-    priceChartRef.current = chart;
-
-    // Trade price line (cyan)
-    const tradeSeries = chart.addSeries(LineSeries, {
-      color: '#06b6d4',
-      lineWidth: 2,
-      title: 'Trade',
-      priceFormat: {
-        type: 'price',
-        precision: 4,
-        minMove: 0.0001,
-      },
-    });
-
-    // Oracle estimate line (purple) — trade / (1 + premium)
-    const oracleSeries = chart.addSeries(LineSeries, {
-      color: '#8b5cf6',
-      lineWidth: 2,
-      title: 'Oracle (est.)',
-      priceFormat: {
-        type: 'price',
-        precision: 4,
-        minMove: 0.0001,
-      },
-    });
-
-    const tradeData = priceData.map(c => ({
-      time: toTime(c.time),
-      value: c.close,
-    }));
-
-    const oracleData = priceData
-      .map(c => {
-        const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
-        const premium = premiumMap.get(hourKey);
-        if (premium === undefined) return null;
-        return {
-          time: toTime(c.time),
-          value: c.close / (1 + premium),
-        };
-      })
-      .filter((d): d is { time: UTCTimestamp; value: number } => d !== null);
-
-    tradeSeries.setData(tradeData);
-    oracleSeries.setData(oracleData);
-    chart.timeScale().fitContent();
-
-    // Sync: only push to funding chart when user is interacting with THIS chart
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      if (activeChart.current !== 'price') return;
-      const tr = chart.timeScale().getVisibleRange();
-      if (!tr) return;
-      chartRef.current?.timeScale().setVisibleRange(tr);
-    });
-
-    // Initial sync: snap to funding chart's current time range
-    if (chartRef.current) {
-      const tr = chartRef.current.timeScale().getVisibleRange();
-      if (tr) {
-        chart.timeScale().setVisibleRange(tr);
-      }
-    }
-
-    // Crosshair move: show trade/oracle/diff values
-    chart.subscribeCrosshairMove((param) => {
-      if (!param.time || !param.seriesData) {
-        setCrosshairPrices(null);
-        return;
-      }
-      const tradePoint = param.seriesData.get(tradeSeries) as { value?: number } | undefined;
-      const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
-      const trade = tradePoint?.value;
-      const oracle = oraclePoint?.value;
-      if (trade !== undefined && oracle !== undefined && oracle > 0) {
-        const diff = ((trade - oracle) / oracle) * 100;
-        setCrosshairPrices({ trade, oracle, diff });
-      } else if (trade !== undefined) {
-        setCrosshairPrices({ trade, oracle: 0, diff: 0 });
-      } else {
-        setCrosshairPrices(null);
-      }
-    });
-
-    const handleResize = () => {
-      if (priceChartContainerRef.current && priceChartRef.current) {
-        priceChartRef.current.applyOptions({
-          width: priceChartContainerRef.current.clientWidth,
-        });
-      }
-    };
-
-    const resizeObserver = new ResizeObserver(handleResize);
-    resizeObserver.observe(priceChartContainerRef.current);
-
-    return () => {
-      resizeObserver.disconnect();
-      if (priceChartRef.current) {
-        priceChartRef.current.remove();
-        priceChartRef.current = null;
-      }
-    };
-  }, [priceData, premiumMap]);
+  }, [fundingData, priceData, premiumMap, height]);
 
   // Compute stats
   const stats = computeStats(fundingData);
@@ -420,22 +333,45 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         </div>
       )}
 
-      {/* Funding Rate Chart */}
+      {/* Chart legend */}
       {fundingData.length > 0 && (
-        <div className="flex items-center gap-3 mb-2">
-          <h4 className="text-white text-sm font-medium">Funding Rate</h4>
-          {crosshairFundingRate !== null && (
-            <span className={`text-xs font-medium ${crosshairFundingRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-              {crosshairFundingRate >= 0 ? '+' : ''}{crosshairFundingRate.toFixed(6)}%
-            </span>
+        <div className="flex items-center gap-4 flex-wrap mb-2">
+          {priceData.length > 0 && (
+            <div className="flex items-center gap-3 text-xs">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
+                <span className="text-gray-400">Trade</span>
+                {crosshairPrices && (
+                  <span className="text-[#06b6d4] font-medium">${crosshairPrices.trade.toFixed(4)}</span>
+                )}
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
+                <span className="text-gray-400">Oracle (est.)</span>
+                {crosshairPrices && crosshairPrices.oracle > 0 && (
+                  <span className="text-[#8b5cf6] font-medium">${crosshairPrices.oracle.toFixed(4)}</span>
+                )}
+              </span>
+              {crosshairPrices && crosshairPrices.oracle > 0 && (
+                <span className={`font-medium ${crosshairPrices.diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  Diff: {crosshairPrices.diff >= 0 ? '+' : ''}{crosshairPrices.diff.toFixed(4)}%
+                </span>
+              )}
+            </div>
           )}
+          <div className="flex items-center gap-1.5 text-xs">
+            <span className="text-gray-400">Funding</span>
+            {crosshairFundingRate !== null && (
+              <span className={`font-medium ${crosshairFundingRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                {crosshairFundingRate >= 0 ? '+' : ''}{crosshairFundingRate.toFixed(6)}%
+              </span>
+            )}
+          </div>
         </div>
       )}
-      <div
-        ref={chartContainerRef}
-        onMouseEnter={() => { activeChart.current = 'funding'; }}
-        onMouseLeave={() => { activeChart.current = null; }}
-      />
+
+      {/* Single multi-pane chart */}
+      <div ref={chartContainerRef} />
 
       {/* Current Prices (real API values from metaAndAssetCtxs) */}
       {currentPrices && (
@@ -464,54 +400,6 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
             })()}
             <div className="text-gray-500 text-xs mt-0.5">premium={currentPrices.premium.toFixed(6)}</div>
           </div>
-        </div>
-      )}
-
-      {/* Price Chart (historical) — stacked below like an RSI panel */}
-      {priceData.length > 0 && (
-        <div className="mt-1">
-          <div className="flex items-center gap-4 mb-1">
-            <h4 className="text-white text-sm font-medium">Price</h4>
-            <button
-              onClick={() => {
-                if (!chartRef.current || !priceChartRef.current) return;
-                const tr = chartRef.current.timeScale().getVisibleRange();
-                if (tr) {
-                  priceChartRef.current.timeScale().setVisibleRange(tr);
-                }
-              }}
-              className="px-2.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
-              title="Snap price chart to funding chart's visible range"
-            >
-              Sync
-            </button>
-            <div className="flex items-center gap-3 text-xs">
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
-                <span className="text-gray-400">Trade</span>
-                {crosshairPrices && (
-                  <span className="text-[#06b6d4] font-medium">${crosshairPrices.trade.toFixed(4)}</span>
-                )}
-              </span>
-              <span className="flex items-center gap-1.5">
-                <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
-                <span className="text-gray-400">Oracle (est.)</span>
-                {crosshairPrices && crosshairPrices.oracle > 0 && (
-                  <span className="text-[#8b5cf6] font-medium">${crosshairPrices.oracle.toFixed(4)}</span>
-                )}
-              </span>
-              {crosshairPrices && crosshairPrices.oracle > 0 && (
-                <span className={`font-medium ${crosshairPrices.diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  Diff: {crosshairPrices.diff >= 0 ? '+' : ''}{crosshairPrices.diff.toFixed(4)}%
-                </span>
-              )}
-            </div>
-          </div>
-          <div
-            ref={priceChartContainerRef}
-            onMouseEnter={() => { activeChart.current = 'price'; }}
-            onMouseLeave={() => { activeChart.current = null; }}
-          />
         </div>
       )}
 
