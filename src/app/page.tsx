@@ -13,11 +13,12 @@ import type { Candle, Timeframe } from '@/types';
 // Dynamic imports (SSR incompatible — uses DOM / canvas)
 const Chart = dynamic(() => import('@/components/Chart'), { ssr: false });
 const TradingViewChart = dynamic(() => import('@/components/TradingViewChart'), { ssr: false });
+const FundingChart = dynamic(() => import('@/components/FundingChart'), { ssr: false });
 
 const TIMEFRAMES: Timeframe[] = ['5m', '15m', '30m', '1h', '4h', '12h', '1d', '1w', '1M'];
 
 type Tab = 'chart' | 'setups' | 'trade';
-type ChartView = 'analysis' | 'tradingview' | 'scanner';
+type ChartView = 'analysis' | 'tradingview' | 'scanner' | 'funding';
 
 export default function Home() {
   const {
@@ -122,7 +123,7 @@ export default function Home() {
             {/* Analysis Controls + Chart View Toggle */}
             <div className="mb-3 border border-gray-800 rounded-xl p-3">
               <div className="flex items-center gap-3 flex-wrap">
-                {chartView !== 'scanner' && (
+                {chartView !== 'scanner' && chartView !== 'funding' && (
                   <>
                     <input
                       type="text"
@@ -175,7 +176,7 @@ export default function Home() {
                 )}
 
                 {/* Chart view toggle - pushed to right */}
-                <div className={`flex gap-1 bg-gray-900 rounded-lg p-0.5 ${chartView === 'scanner' ? '' : 'ml-auto'}`}>
+                <div className={`flex gap-1 bg-gray-900 rounded-lg p-0.5 ${chartView === 'scanner' || chartView === 'funding' ? '' : 'ml-auto'}`}>
                   <button
                     onClick={() => setChartView('analysis')}
                     className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
@@ -206,6 +207,16 @@ export default function Home() {
                   >
                     Scanner
                   </button>
+                  <button
+                    onClick={() => setChartView('funding')}
+                    className={`px-3 py-1 rounded text-xs font-medium transition-colors ${
+                      chartView === 'funding'
+                        ? 'bg-emerald-500 text-white'
+                        : 'text-gray-400 hover:text-white hover:bg-gray-800'
+                    }`}
+                  >
+                    Funding
+                  </button>
                 </div>
               </div>
 
@@ -222,6 +233,8 @@ export default function Home() {
                 <Chart candles={candles} analysis={analysis} height={600} />
               ) : chartView === 'tradingview' ? (
                 <TradingViewChart height={600} />
+              ) : chartView === 'funding' ? (
+                <FundingChart height={600} />
               ) : (
                 <div className="border border-gray-800 rounded-xl p-4" style={{ minHeight: 600 }}>
                   <SFPScanner onSelectCoin={handleScannerSelect} />

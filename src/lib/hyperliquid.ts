@@ -1,5 +1,5 @@
 import { Hyperliquid } from 'hyperliquid';
-import type { Candle, Timeframe, TradeRequest } from '@/types';
+import type { Candle, Timeframe, TradeRequest, FundingRate } from '@/types';
 
 // Re-export config type locally since ours differs from SDK's
 export interface HLConfig {
@@ -198,6 +198,87 @@ export async function fetchOpenOrders(walletAddress: string) {
   });
 
   return response.json();
+}
+
+// ============================================================
+// Funding Rate History
+// ============================================================
+
+/**
+ * Fetch historical funding rates for a coin.
+ * Hyperliquid returns max 500 hours per request, so we paginate.
+ * @param coin - Asset symbol (e.g. "BTC", "OPENAI")
+ * @param days - Number of days of history to fetch (default 30)
+ */
+export async function fetchFundingHistory(
+  coin: string,
+  days: number = 30
+): Promise<FundingRate[]> {
+  const now = Date.now();
+  const startTime = now - days * 86_400_000;
+  const maxHoursPerRequest = 500;
+  const msPerChunk = maxHoursPerRequest * 3_600_000;
+
+  const allRates: FundingRate[] = [];
+  let cursor = startTime;
+
+  while (cursor < now) {
+    const chunkEnd = Math.min(cursor + msPerChunk, now);
+
+    const maxRetries = 3;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const response = await fetch('https://api.hyperliquid.xyz/info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'fundingHistory',
+          coin: coin.replace('-PERP', ''),
+          startTime: cursor,
+          endTime: chunkEnd,
+        }),
+      });
+
+      if (response.status === 429) {
+        if (attempt < maxRetries) {
+          await sleep(1000 * Math.pow(2, attempt));
+          continue;
+        }
+        throw new Error(`Rate limited fetching funding for ${coin} after ${maxRetries} retries`);
+      }
+
+      const data = await response.json();
+
+      if (data === null || data === undefined) {
+        if (attempt < maxRetries) {
+          await sleep(1000 * Math.pow(2, attempt));
+          continue;
+        }
+        throw new Error(`Null response for ${coin} funding after ${maxRetries} retries`);
+      }
+
+      if (!Array.isArray(data)) {
+        throw new Error(`Unexpected funding response for ${coin}: ${JSON.stringify(data).slice(0, 100)}`);
+      }
+
+      allRates.push(...data);
+      break;
+    }
+
+    cursor = chunkEnd;
+
+    // Small delay between paginated requests to avoid rate limits
+    if (cursor < now) {
+      await sleep(200);
+    }
+  }
+
+  // Deduplicate by timestamp (overlapping boundaries)
+  const seen = new Set<number>();
+  return allRates.filter(r => {
+    if (seen.has(r.time)) return false;
+    seen.add(r.time);
+    return true;
+  }).sort((a, b) => a.time - b.time);
 }
 
 // ============================================================
