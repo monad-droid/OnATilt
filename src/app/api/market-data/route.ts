@@ -41,7 +41,13 @@ export async function POST(request: NextRequest) {
         if (!coin) {
           return NextResponse.json({ error: 'coin required' }, { status: 400 });
         }
+        console.log(`[asset-context] Fetching for coin: "${coin}"`);
         const context = await fetchAssetContext(coin);
+        if (context) {
+          console.log(`[asset-context] ${coin} → premium=${context.premium}, mark=${context.markPx}, oracle=${context.oraclePx}`);
+        } else {
+          console.log(`[asset-context] ${coin} → context is NULL (coin not found in universe)`);
+        }
         return NextResponse.json({ context });
       }
 

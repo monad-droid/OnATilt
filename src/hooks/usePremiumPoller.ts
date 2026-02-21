@@ -43,15 +43,22 @@ export function usePremiumPoller(coin: string | null): UsePremiumPollerResult {
     if (!coin) return;
 
     try {
+      console.log(`[PremiumPoller] Polling for coin: "${coin}"`);
       const res = await fetch('/api/market-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'asset-context', coin }),
       });
 
-      if (!res.ok) return;
+      if (!res.ok) {
+        console.warn(`[PremiumPoller] API returned ${res.status}`);
+        return;
+      }
       const data = await res.json();
-      if (!data.context) return;
+      if (!data.context) {
+        console.warn(`[PremiumPoller] No context in response for "${coin}"`, data);
+        return;
+      }
 
       const now = Date.now();
       const currentHour = getCurrentHourStart();
@@ -71,8 +78,9 @@ export function usePremiumPoller(coin: string | null): UsePremiumPollerResult {
 
       samplesRef.current = [...samplesRef.current, sample];
       setSamples([...samplesRef.current]);
-    } catch {
-      // Silently skip failed polls
+      console.log(`[PremiumPoller] Sample #${samplesRef.current.length}: premium=${sample.premium}, mark=${sample.markPx}, oracle=${sample.oraclePx}`);
+    } catch (err) {
+      console.error(`[PremiumPoller] Poll failed:`, err);
     }
   }, [coin]);
 

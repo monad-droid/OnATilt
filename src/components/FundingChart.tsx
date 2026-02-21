@@ -53,8 +53,8 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       : raw.toUpperCase();
   }, [coin]);
 
-  // Poll premium every 30s for intra-hour chart
-  const premiumPoller = usePremiumPoller(fundingData.length > 0 ? normalizedCoin : null);
+  // Poll premium every 30s for intra-hour chart (start immediately when coin is set)
+  const premiumPoller = usePremiumPoller(normalizedCoin);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const raw = overrideCoin ?? coin;
