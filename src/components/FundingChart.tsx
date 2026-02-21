@@ -176,8 +176,6 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     let tradeSeries: any = null;
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
     let oracleSeries: any = null;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    let diffSeries: any = null;
 
     if (priceData.length > 0) {
       tradeSeries = chart.addSeries(LineSeries, {
@@ -210,44 +208,10 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
       tradeSeries.setData(tradeData);
       oracleSeries.setData(oracleData);
-
-      // --- Pane 1 (middle): Mark-Oracle % diff (hourly buckets) ---
-      const diffBuckets = new Map<number, { sum: number; count: number }>();
-      for (const c of priceData) {
-        const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
-        const premium = premiumMap.get(hourKey);
-        if (premium === undefined) continue;
-        const oracle = c.close / (1 + premium);
-        const diff = ((c.close - oracle) / oracle) * 100;
-        const existing = diffBuckets.get(hourKey);
-        if (existing) {
-          existing.sum += diff;
-          existing.count += 1;
-        } else {
-          diffBuckets.set(hourKey, { sum: diff, count: 1 });
-        }
-      }
-      const diffData = Array.from(diffBuckets.entries())
-        .sort(([a], [b]) => a - b)
-        .map(([ms, { sum, count }]) => {
-          const avg = sum / count;
-          return {
-            time: toTime(ms),
-            value: avg,
-            color: avg >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
-          };
-        });
-
-      diffSeries = chart.addSeries(HistogramSeries, {
-        priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
-        title: 'Diff %',
-      }, 1);
-
-      diffSeries.setData(diffData);
     }
 
-    // --- Pane 2 (bottom): Funding rate histogram ---
-    const fundingPane = priceData.length > 0 ? 2 : 0;
+    // --- Pane 1 (bottom): Funding rate histogram ---
+    const fundingPane = priceData.length > 0 ? 1 : 0;
     const histogramSeries = chart.addSeries(HistogramSeries, {
       priceFormat: {
         type: 'price',
@@ -288,12 +252,10 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       if (tradeSeries && oracleSeries) {
         const tradePoint = param.seriesData.get(tradeSeries) as { value?: number } | undefined;
         const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
-        const diffPoint = diffSeries ? param.seriesData.get(diffSeries) as { value?: number } | undefined : undefined;
         const trade = tradePoint?.value;
         const oracle = oraclePoint?.value;
-        const diff = diffPoint?.value;
-        if (trade !== undefined && oracle !== undefined && diff !== undefined) {
-          setCrosshairPrices({ trade, oracle, diff });
+        if (trade !== undefined && oracle !== undefined && oracle > 0) {
+          setCrosshairPrices({ trade, oracle, diff: ((trade - oracle) / oracle) * 100 });
         } else if (trade !== undefined) {
           setCrosshairPrices({ trade, oracle: 0, diff: 0 });
         }
