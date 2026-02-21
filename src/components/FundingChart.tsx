@@ -9,7 +9,9 @@ import {
 import type { IChartApi, UTCTimestamp } from 'lightweight-charts';
 import type { FundingRate, Candle } from '@/types';
 import { usePremiumPoller } from '@/hooks/usePremiumPoller';
+import { estimateFundingRate } from '@/lib/fundingRate';
 import IntraHourChart from './IntraHourChart';
+import EstimateTracker from './EstimateTracker';
 
 interface FundingChartProps {
   height?: number;
@@ -512,25 +514,41 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
             </div>
             {(() => {
               // Use live running avg from poller when available, fall back to API prediction
-              const liveRate = premiumPoller.samples.length >= 2 ? premiumPoller.runningAvg : null;
-              const rate = liveRate ?? (predictedFunding ? predictedFunding.rate : null);
-              if (rate === null) return <div className="text-gray-500 text-sm">unavailable</div>;
-              const pct = liveRate !== null ? rate * 100 : rate * 100;
-              const elapsed = Math.floor((Date.now() - premiumPoller.hourStart) / 60_000);
-              const remaining = 60 - elapsed;
+              const livePremium = premiumPoller.samples.length >= 2 ? premiumPoller.runningAvg : null;
+              if (livePremium !== null && normalizedCoin) {
+                // Apply Ventuals / Hyperliquid funding rate formula to the TWAP premium
+                const fr = estimateFundingRate(livePremium, normalizedCoin);
+                const pct = fr * 100;
+                const elapsed = Math.floor((Date.now() - premiumPoller.hourStart) / 60_000);
+                const remaining = 60 - elapsed;
+                return (
+                  <>
+                    <div className={`text-lg font-semibold ${pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {pct >= 0 ? '+' : ''}{pct.toFixed(6)}%
+                    </div>
+                    <div className="text-gray-500 text-xs mt-0.5">
+                      {(pct * 8760).toFixed(1)}% ann. · premium {(livePremium * 100).toFixed(2)}%
+                    </div>
+                    <div className="text-gray-500 text-xs">
+                      <span className="text-green-400/70">live ({premiumPoller.samples.length} samples, {remaining}m left)</span>
+                      {predictedFunding && (
+                        <>{' · '}settles {new Date(predictedFunding.nextTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</>
+                      )}
+                    </div>
+                  </>
+                );
+              }
+              // Fallback to API prediction
+              if (!predictedFunding) return <div className="text-gray-500 text-sm">unavailable</div>;
+              const pct = predictedFunding.rate * 100;
               return (
                 <>
                   <div className={`text-lg font-semibold ${pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    {pct >= 0 ? '+' : ''}{pct.toFixed(4)}%
+                    {pct >= 0 ? '+' : ''}{pct.toFixed(6)}%
                   </div>
                   <div className="text-gray-500 text-xs mt-0.5">
                     {(pct * 8760).toFixed(1)}% ann.
-                    {liveRate !== null && (
-                      <span className="text-green-400/70"> · live ({premiumPoller.samples.length} samples, {remaining}m left)</span>
-                    )}
-                    {predictedFunding && (
-                      <>{' · '}settles {new Date(predictedFunding.nextTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</>
-                    )}
+                    {' · '}settles {new Date(predictedFunding.nextTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </div>
                 </>
               );
@@ -547,6 +565,13 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
             runningAvg={premiumPoller.runningAvg}
             hourStart={premiumPoller.hourStart}
           />
+        </div>
+      )}
+
+      {/* Estimate accuracy tracker */}
+      {premiumPoller.estimates.length > 0 && (
+        <div className="mt-4">
+          <EstimateTracker estimates={premiumPoller.estimates} />
         </div>
       )}
 
