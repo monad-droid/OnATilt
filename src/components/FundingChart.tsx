@@ -268,7 +268,9 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     histogramSeries.setData(histogramData);
     chart.timeScale().fitContent();
 
-    // Crosshair: show all values from both panes
+    // Crosshair: show all values from both panes.
+    // Keep last-known values so hovering a funding-only timestamp
+    // doesn't blank the price / diff legend.
     chart.subscribeCrosshairMove((param) => {
       if (!param.time || !param.seriesData) {
         setCrosshairFundingRate(null);
@@ -278,9 +280,11 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
       // Funding rate
       const fundingPoint = param.seriesData.get(histogramSeries) as { value?: number } | undefined;
-      setCrosshairFundingRate(fundingPoint?.value ?? null);
+      if (fundingPoint?.value !== undefined) {
+        setCrosshairFundingRate(fundingPoint.value);
+      }
 
-      // Price + diff
+      // Price + diff — only update when we actually have data
       if (tradeSeries && oracleSeries) {
         const tradePoint = param.seriesData.get(tradeSeries) as { value?: number } | undefined;
         const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
@@ -292,9 +296,8 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
           setCrosshairPrices({ trade, oracle, diff });
         } else if (trade !== undefined) {
           setCrosshairPrices({ trade, oracle: 0, diff: 0 });
-        } else {
-          setCrosshairPrices(null);
         }
+        // else: keep previous values
       }
     });
 
