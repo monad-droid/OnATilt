@@ -40,7 +40,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
   const [crosshairPrices, setCrosshairPrices] = useState<{ trade: number; oracle: number; diff: number } | null>(null);
   const [crosshairFundingRate, setCrosshairFundingRate] = useState<number | null>(null);
-  const [predictedFunding, setPredictedFunding] = useState<{ rate: number; nextTime: number } | null>(null);
+  const [predictedFunding, setPredictedFunding] = useState<{ rate: number; nextTime: number; estimated: boolean } | null>(null);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const raw = overrideCoin ?? coin;
@@ -106,6 +106,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         setPredictedFunding({
           rate: parseFloat(predData.predicted.fundingRate),
           nextTime: predData.predicted.nextFundingTime,
+          estimated: !!predData.estimated,
         });
       } else {
         setPredictedFunding(null);
@@ -429,14 +430,17 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
             <div className="text-gray-500 text-xs mt-0.5">premium={currentPrices.premium.toFixed(6)}</div>
           </div>
           <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
-            <div className="text-gray-400 text-xs mb-1">Next Funding</div>
+            <div className="text-gray-400 text-xs mb-1">
+              Next Funding{predictedFunding?.estimated ? ' (est.)' : ''}
+            </div>
             {predictedFunding ? (
               <>
                 <div className={`text-lg font-semibold ${predictedFunding.rate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
                   {predictedFunding.rate >= 0 ? '+' : ''}{(predictedFunding.rate * 100).toFixed(4)}%
                 </div>
                 <div className="text-gray-500 text-xs mt-0.5">
-                  settles {new Date(predictedFunding.nextTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                  {(predictedFunding.rate * 100 * 8760).toFixed(1)}% ann.
+                  {' · '}settles {new Date(predictedFunding.nextTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 </div>
               </>
             ) : (

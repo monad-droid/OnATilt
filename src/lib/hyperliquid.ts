@@ -256,6 +256,7 @@ export interface PredictedFunding {
 /**
  * Fetch predicted funding rate for a coin from the predictedFundings endpoint.
  * Returns the Hyperliquid perp prediction, or null if not available.
+ * Note: Only available for first perp dex (BTC, ETH, etc.), NOT vntl: tokens.
  */
 export async function fetchPredictedFunding(coin: string): Promise<PredictedFunding | null> {
   const response = await fetch('https://api.hyperliquid.xyz/info', {
@@ -286,6 +287,98 @@ export async function fetchPredictedFunding(coin: string): Promise<PredictedFund
   }
 
   return null;
+}
+
+// ============================================================
+// Ventuals Pre-IPO Predicted Funding
+// ============================================================
+//
+// Ventuals applies a dynamic multiplier to Hyperliquid's funding formula
+// based on the mark-to-oracle deviation. The multiplier schedule:
+//   <5%  deviation → targets ~15% annualized (~0.00171%/hr)
+//   5-19% deviation → exponential curve
+//   ≥19% deviation → targets 4.0%/hr max
+//
+// Lookup table from Ventuals docs (mark-to-oracle deviation → hourly FR).
+
+const VENTUALS_FR_TABLE: [number, number][] = [
+  [0.00, 0.0000171],
+  [0.01, 0.0000171],
+  [0.02, 0.0000171],
+  [0.03, 0.0000171],
+  [0.04, 0.0000171],
+  [0.05, 0.0000186],
+  [0.06, 0.0000223],
+  [0.07, 0.0000261],
+  [0.08, 0.0000298],
+  [0.09, 0.0000336],
+  [0.10, 0.0000373],
+  [0.11, 0.0000411],
+  [0.12, 0.0000448],
+  [0.13, 0.0000487],
+  [0.14, 0.0000531],
+  [0.15, 0.0000594],
+  [0.16, 0.0000737],
+  [0.17, 0.0001284],
+  [0.18, 0.0006107],
+  [0.19, 0.0400000],
+  [0.20, 0.0400000],
+];
+
+/**
+ * Estimate the Ventuals pre-IPO hourly funding rate from the current
+ * mark-to-oracle deviation. Uses linear interpolation on the published
+ * Ventuals funding schedule.
+ *
+ * @param markPx  Current mark price
+ * @param oraclePx  Current oracle price
+ * @returns Signed hourly funding rate as a decimal (e.g. 0.0000373 = 0.00373%)
+ */
+export function estimateVentualsFundingRate(markPx: number, oraclePx: number): number {
+  if (oraclePx <= 0) return 0;
+
+  const deviation = (markPx - oraclePx) / oraclePx; // signed
+  const absDeviation = Math.abs(deviation);
+  const sign = deviation >= 0 ? 1 : -1;
+
+  // Clamp to table range
+  if (absDeviation >= 0.19) return sign * 0.04;
+  if (absDeviation <= 0) return 0;
+
+  // Linear interpolation between table points
+  const step = 0.01;
+  const idx = Math.min(Math.floor(absDeviation / step), VENTUALS_FR_TABLE.length - 2);
+  const lower = VENTUALS_FR_TABLE[idx];
+  const upper = VENTUALS_FR_TABLE[idx + 1];
+  const t = (absDeviation - lower[0]) / step;
+  const rate = lower[1] + t * (upper[1] - lower[1]);
+
+  return sign * rate;
+}
+
+/**
+ * For vntl: tokens, compute a predicted funding rate locally since the
+ * predictedFundings endpoint doesn't cover them.
+ * Returns the estimated rate + next settlement time (top of next hour).
+ */
+export async function estimateVntlPredictedFunding(coin: string): Promise<PredictedFunding | null> {
+  const ctx = await fetchAssetContext(coin);
+  if (!ctx) return null;
+
+  const markPx = parseFloat(ctx.markPx);
+  const oraclePx = parseFloat(ctx.oraclePx);
+  if (oraclePx <= 0) return null;
+
+  const rate = estimateVentualsFundingRate(markPx, oraclePx);
+
+  // Next settlement is the top of the next hour
+  const now = Date.now();
+  const nextHour = Math.ceil(now / 3_600_000) * 3_600_000;
+
+  return {
+    fundingRate: rate.toFixed(10),
+    nextFundingTime: nextHour,
+  };
 }
 
 // ============================================================
