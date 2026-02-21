@@ -4,9 +4,10 @@ import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   createChart,
   HistogramSeries,
+  LineSeries,
 } from 'lightweight-charts';
 import type { IChartApi, UTCTimestamp } from 'lightweight-charts';
-import type { FundingRate } from '@/types';
+import type { FundingRate, Candle } from '@/types';
 
 interface FundingChartProps {
   height?: number;
@@ -28,12 +29,15 @@ function toTime(ms: number): UTCTimestamp {
 export default function FundingChart({ height = 600 }: FundingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const priceChartContainerRef = useRef<HTMLDivElement>(null);
+  const priceChartRef = useRef<IChartApi | null>(null);
 
   const [coin, setCoin] = useState('vntl:OPENAI');
   const [range, setRange] = useState<RangeOption>('30d');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [fundingData, setFundingData] = useState<FundingRate[]>([]);
+  const [priceData, setPriceData] = useState<Candle[]>([]);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const c = overrideCoin ?? coin;
@@ -60,6 +64,21 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       }
 
       setFundingData(data.fundingHistory || []);
+
+      // Fetch hourly candle data for oracle price chart
+      const candleCoin = c.includes(':') ? c.split(':')[1] : c.replace('-PERP', '');
+      const candleRes = await fetch('/api/market-data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'candles',
+          coin: candleCoin,
+          timeframe: '1h',
+          limit: days * 24,
+        }),
+      });
+      const candleData = await candleRes.json();
+      setPriceData(candleData.candles || []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch funding data');
     } finally {
@@ -146,6 +165,81 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     };
   }, [fundingData, height]);
 
+  // Render oracle price chart when price data changes
+  useEffect(() => {
+    if (!priceChartContainerRef.current || priceData.length === 0) return;
+
+    if (priceChartRef.current) {
+      priceChartRef.current.remove();
+      priceChartRef.current = null;
+    }
+
+    const chart = createChart(priceChartContainerRef.current, {
+      width: priceChartContainerRef.current.clientWidth,
+      height: 250,
+      layout: {
+        background: { color: '#0a0a0f' },
+        textColor: '#9ca3af',
+        fontSize: 11,
+      },
+      grid: {
+        vertLines: { color: '#1f2937' },
+        horzLines: { color: '#1f2937' },
+      },
+      timeScale: {
+        timeVisible: true,
+        secondsVisible: false,
+        borderColor: '#374151',
+      },
+      rightPriceScale: {
+        borderColor: '#374151',
+      },
+      crosshair: {
+        horzLine: { color: '#4b5563' },
+        vertLine: { color: '#4b5563' },
+      },
+    });
+
+    priceChartRef.current = chart;
+
+    const lineSeries = chart.addSeries(LineSeries, {
+      color: '#8b5cf6',
+      lineWidth: 2,
+      priceFormat: {
+        type: 'price',
+        precision: 4,
+        minMove: 0.0001,
+      },
+    });
+
+    const lineData = priceData.map(c => ({
+      time: toTime(c.time),
+      value: c.close,
+    }));
+
+    lineSeries.setData(lineData);
+    chart.timeScale().fitContent();
+
+    const handleResize = () => {
+      if (priceChartContainerRef.current && priceChartRef.current) {
+        priceChartRef.current.applyOptions({
+          width: priceChartContainerRef.current.clientWidth,
+        });
+      }
+    };
+
+    const resizeObserver = new ResizeObserver(handleResize);
+    resizeObserver.observe(priceChartContainerRef.current);
+
+    return () => {
+      resizeObserver.disconnect();
+      if (priceChartRef.current) {
+        priceChartRef.current.remove();
+        priceChartRef.current = null;
+      }
+    };
+  }, [priceData]);
+
   // Compute stats
   const stats = computeStats(fundingData);
 
@@ -201,8 +295,16 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         </div>
       )}
 
-      {/* Chart */}
+      {/* Funding Rate Chart */}
       <div ref={chartContainerRef} />
+
+      {/* Oracle Price Chart */}
+      {priceData.length > 0 && (
+        <div className="mt-4">
+          <h4 className="text-white text-sm font-medium mb-2">Oracle Price</h4>
+          <div ref={priceChartContainerRef} />
+        </div>
+      )}
 
       {/* Stats */}
       {fundingData.length > 0 && stats && (
