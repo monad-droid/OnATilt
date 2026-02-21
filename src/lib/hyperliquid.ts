@@ -232,7 +232,7 @@ export async function fetchFundingHistory(
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           type: 'fundingHistory',
-          coin: coin.replace('-PERP', ''),
+          coin: coin.includes(':') ? coin : coin.replace('-PERP', ''),
           startTime: cursor,
           endTime: chunkEnd,
         }),
@@ -248,16 +248,19 @@ export async function fetchFundingHistory(
 
       const data = await response.json();
 
+      // Null response could be rate limit (retry) or no data for this chunk (skip)
       if (data === null || data === undefined) {
         if (attempt < maxRetries) {
           await sleep(1000 * Math.pow(2, attempt));
           continue;
         }
-        throw new Error(`Null response for ${coin} funding after ${maxRetries} retries`);
+        // No data for this time range — skip instead of throwing
+        break;
       }
 
       if (!Array.isArray(data)) {
-        throw new Error(`Unexpected funding response for ${coin}: ${JSON.stringify(data).slice(0, 100)}`);
+        // Empty array-like or error object — skip this chunk
+        break;
       }
 
       allRates.push(...data);

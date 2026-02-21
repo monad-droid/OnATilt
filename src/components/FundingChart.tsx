@@ -29,7 +29,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
 
-  const [coin, setCoin] = useState('OPENAI');
+  const [coin, setCoin] = useState('vntl:OPENAI');
   const [range, setRange] = useState<RangeOption>('30d');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -156,9 +156,9 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         <input
           type="text"
           value={coin}
-          onChange={(e) => setCoin(e.target.value.toUpperCase())}
-          placeholder="OPENAI"
-          className="w-28 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm font-semibold focus:outline-none focus:border-blue-500 text-center uppercase"
+          onChange={(e) => setCoin(e.target.value)}
+          placeholder="vntl:OPENAI"
+          className="w-36 bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm font-semibold focus:outline-none focus:border-blue-500 text-center"
         />
 
         <div className="flex gap-1 bg-gray-900 rounded-lg p-0.5">
