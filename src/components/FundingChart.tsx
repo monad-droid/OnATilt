@@ -41,7 +41,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
   const [crosshairPrices, setCrosshairPrices] = useState<{ trade: number; oracle: number; diff: number } | null>(null);
   const [crosshairFundingRate, setCrosshairFundingRate] = useState<number | null>(null);
-  const isSyncing = useRef(false);
+  const lastSyncTime = useRef(0);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const raw = overrideCoin ?? coin;
@@ -183,14 +183,13 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     histogramSeries.setData(histogramData);
     chart.timeScale().fitContent();
 
-    // Sync zoom with price chart (using time range so timestamps align 1:1)
+    // Sync zoom with price chart (timestamp debounce prevents feedback loops)
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      if (isSyncing.current) return;
+      if (Date.now() - lastSyncTime.current < 50) return;
       const timeRange = chart.timeScale().getVisibleRange();
       if (!timeRange) return;
-      isSyncing.current = true;
+      lastSyncTime.current = Date.now();
       priceChartRef.current?.timeScale().setVisibleRange(timeRange);
-      requestAnimationFrame(() => { isSyncing.current = false; });
     });
 
     // Crosshair move: show funding rate value
@@ -320,15 +319,23 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     oracleSeries.setData(oracleData);
     chart.timeScale().fitContent();
 
-    // Sync zoom with funding chart (using time range so timestamps align 1:1)
+    // Sync zoom with funding chart (timestamp debounce prevents feedback loops)
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      if (isSyncing.current) return;
+      if (Date.now() - lastSyncTime.current < 50) return;
       const timeRange = chart.timeScale().getVisibleRange();
       if (!timeRange) return;
-      isSyncing.current = true;
+      lastSyncTime.current = Date.now();
       chartRef.current?.timeScale().setVisibleRange(timeRange);
-      requestAnimationFrame(() => { isSyncing.current = false; });
     });
+
+    // Initial sync: align price chart to funding chart's current range
+    if (chartRef.current) {
+      const fundingRange = chartRef.current.timeScale().getVisibleRange();
+      if (fundingRange) {
+        lastSyncTime.current = Date.now();
+        chart.timeScale().setVisibleRange(fundingRange);
+      }
+    }
 
     // Crosshair move: show trade/oracle/diff values
     chart.subscribeCrosshairMove((param) => {
