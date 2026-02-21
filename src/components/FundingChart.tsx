@@ -122,14 +122,19 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     }
   }, [coin, range]);
 
-  // Build premium map from funding data for oracle estimate
-  const premiumMap = useMemo(() => {
-    const map = new Map<number, number>();
+  // Build sorted premium + funding arrays for nearest-timestamp matching.
+  // Funding `time` is the settlement (end-of-hour), candle `time` is the open
+  // (start-of-hour), so we snap funding to the previous hour boundary to align.
+  const { premiumByHour, fundingByHour } = useMemo(() => {
+    const pMap = new Map<number, number>();
+    const fMap = new Map<number, number>();
     for (const f of fundingData) {
-      const hourKey = Math.round(f.time / 3_600_000) * 3_600_000;
-      map.set(hourKey, parseFloat(f.premium));
+      // Snap to previous hour: settlement at 15:00:00.048 → period start 14:00
+      const hourStart = Math.floor(f.time / 3_600_000) * 3_600_000 - 3_600_000;
+      pMap.set(hourStart, parseFloat(f.premium));
+      fMap.set(hourStart, parseFloat(f.fundingRate));
     }
-    return map;
+    return { premiumByHour: pMap, fundingByHour: fMap };
   }, [fundingData]);
 
   // Single chart with two panes (v5 multi-pane: shared time scale, no sync needed)
@@ -199,8 +204,8 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
       const oracleData = priceData
         .map(c => {
-          const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
-          const premium = premiumMap.get(hourKey);
+          const hourKey = Math.floor(c.time / 3_600_000) * 3_600_000;
+          const premium = premiumByHour.get(hourKey);
           if (premium === undefined) return null;
           return { time: toTime(c.time), value: c.close / (1 + premium) };
         })
@@ -220,10 +225,12 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       },
     }, fundingPane);
 
+    // Snap funding bars to the same hour grid as candles (period start)
     const histogramData = fundingData.map(r => {
       const rate = parseFloat(r.fundingRate);
+      const hourStart = Math.floor(r.time / 3_600_000) * 3_600_000 - 3_600_000;
       return {
-        time: toTime(r.time),
+        time: toTime(hourStart),
         value: rate * 100,
         color: rate >= 0 ? '#22c55e' : '#ef4444',
       };
@@ -279,7 +286,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         chartRef.current = null;
       }
     };
-  }, [fundingData, priceData, premiumMap, height]);
+  }, [fundingData, priceData, premiumByHour, fundingByHour, height]);
 
   // Compute stats
   const stats = computeStats(fundingData);
