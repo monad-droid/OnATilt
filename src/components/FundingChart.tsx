@@ -41,11 +41,16 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
-    const c = overrideCoin ?? coin;
+    const raw = overrideCoin ?? coin;
     const r = overrideRange ?? range;
     const days = RANGE_OPTIONS.find(o => o.value === r)?.days ?? 30;
 
-    if (!c.trim()) return;
+    if (!raw.trim()) return;
+
+    // Normalize: vntl: prefix stays lowercase, coin name uppercased
+    const c = raw.includes(':')
+      ? raw.split(':')[0].toLowerCase() + ':' + raw.split(':')[1].toUpperCase()
+      : raw.toUpperCase();
 
     setLoading(true);
     setError(null);
