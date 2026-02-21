@@ -178,7 +178,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     return map;
   }, [fundingData]);
 
-  // Render oracle + mark price chart when data changes
+  // Render mark + oracle price chart when data changes
   useEffect(() => {
     if (!priceChartContainerRef.current || priceData.length === 0) return;
 
@@ -215,19 +215,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
     priceChartRef.current = chart;
 
-    // Oracle price line (purple)
-    const oracleSeries = chart.addSeries(LineSeries, {
-      color: '#8b5cf6',
-      lineWidth: 2,
-      title: 'Oracle',
-      priceFormat: {
-        type: 'price',
-        precision: 4,
-        minMove: 0.0001,
-      },
-    });
-
-    // Mark price line (cyan)
+    // Mark price line (cyan) — candleSnapshot returns mark price candles
     const markSeries = chart.addSeries(LineSeries, {
       color: '#06b6d4',
       lineWidth: 2,
@@ -239,25 +227,37 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       },
     });
 
-    const oracleLineData = priceData.map(c => ({
+    // Oracle price line (purple) — derived: oracle = mark / (1 + premium)
+    const oracleSeries = chart.addSeries(LineSeries, {
+      color: '#8b5cf6',
+      lineWidth: 2,
+      title: 'Oracle',
+      priceFormat: {
+        type: 'price',
+        precision: 4,
+        minMove: 0.0001,
+      },
+    });
+
+    const markLineData = priceData.map(c => ({
       time: toTime(c.time),
       value: c.close,
     }));
 
-    const markLineData = priceData
+    const oracleLineData = priceData
       .map(c => {
         const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
         const premium = premiumMap.get(hourKey);
         if (premium === undefined) return null;
         return {
           time: toTime(c.time),
-          value: c.close * (1 + premium),
+          value: c.close / (1 + premium),
         };
       })
       .filter((d): d is { time: UTCTimestamp; value: number } => d !== null);
 
-    oracleSeries.setData(oracleLineData);
     markSeries.setData(markLineData);
+    oracleSeries.setData(oracleLineData);
     chart.timeScale().fitContent();
 
     // Track crosshair for live oracle/mark readout
@@ -266,15 +266,15 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         setCrosshairPrices(null);
         return;
       }
-      const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
       const markPoint = param.seriesData.get(markSeries) as { value?: number } | undefined;
-      const oracleVal = oraclePoint?.value;
+      const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
       const markVal = markPoint?.value;
-      if (oracleVal !== undefined && markVal !== undefined) {
+      const oracleVal = oraclePoint?.value;
+      if (markVal !== undefined && oracleVal !== undefined) {
         const diff = ((markVal - oracleVal) / oracleVal) * 100;
         setCrosshairPrices({ oracle: oracleVal, mark: markVal, diff });
-      } else if (oracleVal !== undefined) {
-        setCrosshairPrices({ oracle: oracleVal, mark: 0, diff: 0 });
+      } else if (markVal !== undefined) {
+        setCrosshairPrices({ oracle: 0, mark: markVal, diff: 0 });
       } else {
         setCrosshairPrices(null);
       }
@@ -358,20 +358,20 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       {/* Funding Rate Chart */}
       <div ref={chartContainerRef} />
 
-      {/* Oracle vs Mark Price Chart */}
+      {/* Mark vs Oracle Price Chart */}
       {priceData.length > 0 && (
         <div className="mt-4">
           <div className="flex items-center justify-between mb-2">
             <div className="flex items-center gap-4">
-              <h4 className="text-white text-sm font-medium">Oracle vs Mark Price</h4>
+              <h4 className="text-white text-sm font-medium">Mark vs Oracle Price</h4>
               <div className="flex items-center gap-3 text-xs">
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
-                  <span className="text-gray-400">Oracle</span>
-                </span>
                 <span className="flex items-center gap-1.5">
                   <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
                   <span className="text-gray-400">Mark</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
+                  <span className="text-gray-400">Oracle</span>
                 </span>
               </div>
             </div>
@@ -390,23 +390,23 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
                 if (latestCandle) {
                   const hourKey = Math.round(latestCandle.time / 3_600_000) * 3_600_000;
                   const premium = premiumMap.get(hourKey);
-                  oracle = latestCandle.close;
+                  mark = latestCandle.close;
                   if (premium !== undefined) {
-                    mark = oracle * (1 + premium);
+                    oracle = mark / (1 + premium);
                     diff = premium * 100;
                   }
                 }
               }
 
-              if (oracle === undefined) return null;
+              if (mark === undefined) return null;
               return (
                 <div className="flex items-center gap-3 text-xs">
                   <span className="text-gray-400">
-                    Oracle: <span className="text-[#8b5cf6] font-medium">${oracle.toFixed(4)}</span>
+                    Mark: <span className="text-[#06b6d4] font-medium">${mark.toFixed(4)}</span>
                   </span>
-                  {mark !== undefined && (
+                  {oracle !== undefined && oracle > 0 && (
                     <span className="text-gray-400">
-                      Mark: <span className="text-[#06b6d4] font-medium">${mark.toFixed(4)}</span>
+                      Oracle: <span className="text-[#8b5cf6] font-medium">${oracle.toFixed(4)}</span>
                     </span>
                   )}
                   {diff !== undefined && (
