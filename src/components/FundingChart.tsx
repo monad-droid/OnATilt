@@ -38,6 +38,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [error, setError] = useState<string | null>(null);
   const [fundingData, setFundingData] = useState<FundingRate[]>([]);
   const [priceData, setPriceData] = useState<Candle[]>([]);
+  const [crosshairPrices, setCrosshairPrices] = useState<{ oracle: number; mark: number; diff: number } | null>(null);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const c = overrideCoin ?? coin;
@@ -259,6 +260,26 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     markSeries.setData(markLineData);
     chart.timeScale().fitContent();
 
+    // Track crosshair for live oracle/mark readout
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time || !param.seriesData) {
+        setCrosshairPrices(null);
+        return;
+      }
+      const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
+      const markPoint = param.seriesData.get(markSeries) as { value?: number } | undefined;
+      const oracleVal = oraclePoint?.value;
+      const markVal = markPoint?.value;
+      if (oracleVal !== undefined && markVal !== undefined) {
+        const diff = ((markVal - oracleVal) / oracleVal) * 100;
+        setCrosshairPrices({ oracle: oracleVal, mark: markVal, diff });
+      } else if (oracleVal !== undefined) {
+        setCrosshairPrices({ oracle: oracleVal, mark: 0, diff: 0 });
+      } else {
+        setCrosshairPrices(null);
+      }
+    });
+
     const handleResize = () => {
       if (priceChartContainerRef.current && priceChartRef.current) {
         priceChartRef.current.applyOptions({
@@ -355,25 +376,44 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
               </div>
             </div>
             {(() => {
-              const latestCandle = priceData[priceData.length - 1];
-              if (!latestCandle) return null;
-              const hourKey = Math.round(latestCandle.time / 3_600_000) * 3_600_000;
-              const premium = premiumMap.get(hourKey);
-              if (premium === undefined) return null;
-              const oracle = latestCandle.close;
-              const mark = oracle * (1 + premium);
-              const diff = ((mark - oracle) / oracle) * 100;
+              // Use crosshair values if hovering, otherwise fall back to latest
+              let oracle: number | undefined;
+              let mark: number | undefined;
+              let diff: number | undefined;
+
+              if (crosshairPrices) {
+                oracle = crosshairPrices.oracle;
+                mark = crosshairPrices.mark;
+                diff = crosshairPrices.diff;
+              } else {
+                const latestCandle = priceData[priceData.length - 1];
+                if (latestCandle) {
+                  const hourKey = Math.round(latestCandle.time / 3_600_000) * 3_600_000;
+                  const premium = premiumMap.get(hourKey);
+                  oracle = latestCandle.close;
+                  if (premium !== undefined) {
+                    mark = oracle * (1 + premium);
+                    diff = premium * 100;
+                  }
+                }
+              }
+
+              if (oracle === undefined) return null;
               return (
                 <div className="flex items-center gap-3 text-xs">
                   <span className="text-gray-400">
                     Oracle: <span className="text-[#8b5cf6] font-medium">${oracle.toFixed(4)}</span>
                   </span>
-                  <span className="text-gray-400">
-                    Mark: <span className="text-[#06b6d4] font-medium">${mark.toFixed(4)}</span>
-                  </span>
-                  <span className={`font-medium ${diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                    {diff >= 0 ? '+' : ''}{diff.toFixed(4)}%
-                  </span>
+                  {mark !== undefined && (
+                    <span className="text-gray-400">
+                      Mark: <span className="text-[#06b6d4] font-medium">${mark.toFixed(4)}</span>
+                    </span>
+                  )}
+                  {diff !== undefined && (
+                    <span className={`font-medium ${diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                      {diff >= 0 ? '+' : ''}{diff.toFixed(4)}%
+                    </span>
+                  )}
                 </div>
               );
             })()}
