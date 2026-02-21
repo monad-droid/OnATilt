@@ -185,37 +185,80 @@ export interface AssetContext {
  */
 export async function fetchAssetContext(coin: string): Promise<AssetContext | null> {
   const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
-  const isHip3 = coin.includes(':');
 
-  // perpsMetaAndAssetCtxs returns ALL perp dexes (main + HIP-3 builder-deployed like vntl)
-  // metaAndAssetCtxs only returns the main perp exchange
-  const response = await fetch('https://api.hyperliquid.xyz/info', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'perpsMetaAndAssetCtxs' }),
-  });
+  // Try perpsMetaAndAssetCtxs first (covers ALL dexes including HIP-3 like vntl)
+  // Fall back to metaAndAssetCtxs if that fails
+  for (const endpoint of ['perpsMetaAndAssetCtxs', 'metaAndAssetCtxs'] as const) {
+    try {
+      const response = await fetch('https://api.hyperliquid.xyz/info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: endpoint }),
+      });
 
-  const data = await response.json();
+      if (!response.ok) {
+        console.log(`[fetchAssetContext] ${endpoint} returned ${response.status}, trying next...`);
+        continue;
+      }
 
-  // Response is array of [meta, [ctxs]] pairs — one pair per perp dex
-  // Each entry: { universe: [{name, ...}], ... } paired with [{markPx, oraclePx, ...}]
-  if (!Array.isArray(data)) {
-    console.log(`[fetchAssetContext] Unexpected response type: ${typeof data}`);
+      const data = await response.json();
+      console.log(`[fetchAssetContext] ${endpoint} response: type=${typeof data}, isArray=${Array.isArray(data)}, length=${Array.isArray(data) ? data.length : 'N/A'}, preview=${JSON.stringify(data).slice(0, 300)}`);
+
+      const result = searchInMetaResponse(data, searchName);
+      if (result) return result;
+
+    } catch (err) {
+      console.log(`[fetchAssetContext] ${endpoint} error: ${err}`);
+      continue;
+    }
+  }
+
+  return null;
+}
+
+function searchInMetaResponse(data: unknown, searchName: string): AssetContext | null {
+  if (!Array.isArray(data)) return null;
+
+  // Format A: [meta, [ctxs]] — 2 elements, metaAndAssetCtxs style
+  if (data.length === 2 && data[0]?.universe && Array.isArray(data[1])) {
+    const universe: { name: string }[] = data[0].universe;
+    const ctxs: Record<string, string>[] = data[1];
+    for (let i = 0; i < universe.length; i++) {
+      if (universe[i].name === searchName) {
+        console.log(`[fetchAssetContext] ✓ Found "${searchName}" (format A, index ${i})`);
+        const ctx = ctxs[i];
+        return {
+          coin: universe[i].name,
+          markPx: ctx.markPx ?? '0',
+          oraclePx: ctx.oraclePx ?? '0',
+          premium: ctx.premium ?? '0',
+          funding: ctx.funding ?? '0',
+          openInterest: ctx.openInterest ?? '0',
+        };
+      }
+    }
     return null;
   }
 
-  console.log(`[fetchAssetContext] Looking for "${searchName}" (hip3=${isHip3}). Response has ${data.length} dex entries.`);
-
+  // Format B: array of dex entries — each entry could be [meta, [ctxs]] or {universe, assetCtxs}
   for (let dexIdx = 0; dexIdx < data.length; dexIdx++) {
     const entry = data[dexIdx];
-    const universe: { name: string }[] = entry?.universe ?? entry?.[0]?.universe ?? [];
-    const ctxs: Record<string, string>[] = entry?.assetCtxs ?? entry?.[1] ?? [];
+    let universe: { name: string }[] = [];
+    let ctxs: Record<string, string>[] = [];
 
-    if (universe.length === 0) continue;
+    if (Array.isArray(entry) && entry.length === 2) {
+      // [meta, [ctxs]]
+      universe = entry[0]?.universe ?? [];
+      ctxs = entry[1] ?? [];
+    } else if (entry?.universe) {
+      // {universe: [...], assetCtxs: [...]}
+      universe = entry.universe;
+      ctxs = entry.assetCtxs ?? [];
+    }
 
     for (let i = 0; i < universe.length; i++) {
       if (universe[i].name === searchName) {
-        console.log(`[fetchAssetContext] ✓ Found "${searchName}" in dex ${dexIdx}, index ${i}`);
+        console.log(`[fetchAssetContext] ✓ Found "${searchName}" (format B, dex ${dexIdx}, index ${i})`);
         const ctx = ctxs[i];
         return {
           coin: universe[i].name,
@@ -228,15 +271,6 @@ export async function fetchAssetContext(coin: string): Promise<AssetContext | nu
       }
     }
   }
-
-  // Debug: log what names exist across all dexes
-  const allNames: string[] = [];
-  for (const entry of data) {
-    const universe: { name: string }[] = entry?.universe ?? entry?.[0]?.universe ?? [];
-    allNames.push(...universe.map(u => u.name));
-  }
-  const similar = allNames.filter(n => n.toLowerCase().includes(searchName.toLowerCase().split(':').pop() ?? ''));
-  console.log(`[fetchAssetContext] "${searchName}" not found in ${allNames.length} total assets across ${data.length} dexes. Similar: [${similar.slice(0, 10).join(', ')}]`);
 
   return null;
 }
