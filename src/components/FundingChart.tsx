@@ -211,21 +211,32 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       tradeSeries.setData(tradeData);
       oracleSeries.setData(oracleData);
 
-      // --- Pane 1 (middle): Mark-Oracle % diff ---
-      const diffData = priceData
-        .map(c => {
-          const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
-          const premium = premiumMap.get(hourKey);
-          if (premium === undefined) return null;
-          const oracle = c.close / (1 + premium);
-          const diff = ((c.close - oracle) / oracle) * 100;
+      // --- Pane 1 (middle): Mark-Oracle % diff (hourly buckets) ---
+      const diffBuckets = new Map<number, { sum: number; count: number }>();
+      for (const c of priceData) {
+        const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
+        const premium = premiumMap.get(hourKey);
+        if (premium === undefined) continue;
+        const oracle = c.close / (1 + premium);
+        const diff = ((c.close - oracle) / oracle) * 100;
+        const existing = diffBuckets.get(hourKey);
+        if (existing) {
+          existing.sum += diff;
+          existing.count += 1;
+        } else {
+          diffBuckets.set(hourKey, { sum: diff, count: 1 });
+        }
+      }
+      const diffData = Array.from(diffBuckets.entries())
+        .sort(([a], [b]) => a - b)
+        .map(([ms, { sum, count }]) => {
+          const avg = sum / count;
           return {
-            time: toTime(c.time),
-            value: diff,
-            color: diff >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
+            time: toTime(ms),
+            value: avg,
+            color: avg >= 0 ? 'rgba(34,197,94,0.5)' : 'rgba(239,68,68,0.5)',
           };
-        })
-        .filter((d): d is { time: UTCTimestamp; value: number; color: string } => d !== null);
+        });
 
       diffSeries = chart.addSeries(HistogramSeries, {
         priceFormat: { type: 'price', precision: 4, minMove: 0.0001 },
