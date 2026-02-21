@@ -182,11 +182,13 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     histogramSeries.setData(histogramData);
     chart.timeScale().fitContent();
 
-    // Sync zoom with price chart
-    chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
-      if (!logicalRange || isSyncing.current) return;
+    // Sync zoom with price chart (using time range so timestamps align 1:1)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      if (isSyncing.current) return;
+      const timeRange = chart.timeScale().getVisibleRange();
+      if (!timeRange) return;
       isSyncing.current = true;
-      priceChartRef.current?.timeScale().setVisibleLogicalRange(logicalRange);
+      priceChartRef.current?.timeScale().setVisibleRange(timeRange);
       isSyncing.current = false;
     });
 
@@ -303,11 +305,13 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     oracleSeries.setData(oracleData);
     chart.timeScale().fitContent();
 
-    // Sync zoom with funding chart
-    chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
-      if (!logicalRange || isSyncing.current) return;
+    // Sync zoom with funding chart (using time range so timestamps align 1:1)
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      if (isSyncing.current) return;
+      const timeRange = chart.timeScale().getVisibleRange();
+      if (!timeRange) return;
       isSyncing.current = true;
-      chartRef.current?.timeScale().setVisibleLogicalRange(logicalRange);
+      chartRef.current?.timeScale().setVisibleRange(timeRange);
       isSyncing.current = false;
     });
 
