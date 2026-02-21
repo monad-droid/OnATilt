@@ -66,7 +66,8 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       setFundingData(data.fundingHistory || []);
 
       // Fetch hourly candle data for oracle price chart
-      const candleCoin = c.includes(':') ? c.split(':')[1] : c.replace('-PERP', '');
+      // Keep vntl: prefix for venture tokens — Hyperliquid needs it
+      const candleCoin = c.replace('-PERP', '');
       const candleRes = await fetch('/api/market-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
