@@ -183,9 +183,11 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     chart.timeScale().fitContent();
 
     // Sync: only push to price chart when user is interacting with THIS chart
-    chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
-      if (activeChart.current !== 'funding' || !logicalRange) return;
-      priceChartRef.current?.timeScale().setVisibleLogicalRange(logicalRange);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      if (activeChart.current !== 'funding') return;
+      const timeRange = chart.timeScale().getVisibleRange();
+      if (!timeRange) return;
+      priceChartRef.current?.timeScale().setVisibleRange(timeRange);
     });
 
     chart.subscribeCrosshairMove((param) => {
@@ -308,16 +310,18 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     chart.timeScale().fitContent();
 
     // Sync: only push to funding chart when user is interacting with THIS chart
-    chart.timeScale().subscribeVisibleLogicalRangeChange((logicalRange) => {
-      if (activeChart.current !== 'price' || !logicalRange) return;
-      chartRef.current?.timeScale().setVisibleLogicalRange(logicalRange);
+    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
+      if (activeChart.current !== 'price') return;
+      const timeRange = chart.timeScale().getVisibleRange();
+      if (!timeRange) return;
+      chartRef.current?.timeScale().setVisibleRange(timeRange);
     });
 
-    // Initial sync: snap to funding chart's current logical range
+    // Initial sync: snap to funding chart's current time range
     if (chartRef.current) {
-      const fundingLogicalRange = chartRef.current.timeScale().getVisibleLogicalRange();
-      if (fundingLogicalRange) {
-        chart.timeScale().setVisibleLogicalRange(fundingLogicalRange);
+      const fundingRange = chartRef.current.timeScale().getVisibleRange();
+      if (fundingRange) {
+        chart.timeScale().setVisibleRange(fundingRange);
       }
     }
 
@@ -470,9 +474,9 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
             <h4 className="text-white text-sm font-medium">Price</h4>
             <button
               onClick={() => {
-                const logicalRange = chartRef.current?.timeScale().getVisibleLogicalRange();
-                if (logicalRange && priceChartRef.current) {
-                  priceChartRef.current.timeScale().setVisibleLogicalRange(logicalRange);
+                const timeRange = chartRef.current?.timeScale().getVisibleRange();
+                if (timeRange && priceChartRef.current) {
+                  priceChartRef.current.timeScale().setVisibleRange(timeRange);
                 }
               }}
               className="px-2.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
