@@ -197,6 +197,9 @@ export async function fetchAssetContext(coin: string): Promise<AssetContext | nu
   // Match coin name — handle vntl: prefix
   const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
 
+  // Also try matching just the token part (e.g. "OPENAI" from "vntl:OPENAI")
+  const tokenPart = coin.includes(':') ? coin.split(':')[1] : null;
+
   for (let i = 0; i < universe.length; i++) {
     if (universe[i].name === searchName) {
       const ctx = ctxs[i];
@@ -208,6 +211,33 @@ export async function fetchAssetContext(coin: string): Promise<AssetContext | nu
         funding: ctx.funding ?? '0',
         openInterest: ctx.openInterest ?? '0',
       };
+    }
+  }
+
+  // Fallback: try matching just the token name without prefix
+  if (tokenPart) {
+    for (let i = 0; i < universe.length; i++) {
+      if (universe[i].name === tokenPart) {
+        console.log(`[fetchAssetContext] Matched "${coin}" via token fallback → universe name "${universe[i].name}"`);
+        const ctx = ctxs[i];
+        return {
+          coin: universe[i].name,
+          markPx: ctx.markPx ?? '0',
+          oraclePx: ctx.oraclePx ?? '0',
+          premium: ctx.premium ?? '0',
+          funding: ctx.funding ?? '0',
+          openInterest: ctx.openInterest ?? '0',
+        };
+      }
+    }
+    // Log what names contain the token for debugging
+    const similar = universe
+      .filter(u => u.name.toUpperCase().includes(tokenPart.toUpperCase()))
+      .map(u => u.name);
+    if (similar.length > 0) {
+      console.log(`[fetchAssetContext] No exact match for "${searchName}" or "${tokenPart}". Similar names found: ${similar.join(', ')}`);
+    } else {
+      console.log(`[fetchAssetContext] No match for "${searchName}" or "${tokenPart}". No similar names found in ${universe.length} assets.`);
     }
   }
 
