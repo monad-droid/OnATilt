@@ -508,21 +508,33 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
           </div>
           <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
             <div className="text-gray-400 text-xs mb-1">
-              Next Funding{predictedFunding?.estimated ? ' (est.)' : ''}
+              Next Funding (est.)
             </div>
-            {predictedFunding ? (
-              <>
-                <div className={`text-lg font-semibold ${predictedFunding.rate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                  {predictedFunding.rate >= 0 ? '+' : ''}{(predictedFunding.rate * 100).toFixed(4)}%
-                </div>
-                <div className="text-gray-500 text-xs mt-0.5">
-                  {(predictedFunding.rate * 100 * 8760).toFixed(1)}% ann.
-                  {' · '}settles {new Date(predictedFunding.nextTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                </div>
-              </>
-            ) : (
-              <div className="text-gray-500 text-sm">unavailable</div>
-            )}
+            {(() => {
+              // Use live running avg from poller when available, fall back to API prediction
+              const liveRate = premiumPoller.samples.length >= 2 ? premiumPoller.runningAvg : null;
+              const rate = liveRate ?? (predictedFunding ? predictedFunding.rate : null);
+              if (rate === null) return <div className="text-gray-500 text-sm">unavailable</div>;
+              const pct = liveRate !== null ? rate * 100 : rate * 100;
+              const elapsed = Math.floor((Date.now() - premiumPoller.hourStart) / 60_000);
+              const remaining = 60 - elapsed;
+              return (
+                <>
+                  <div className={`text-lg font-semibold ${pct >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {pct >= 0 ? '+' : ''}{pct.toFixed(4)}%
+                  </div>
+                  <div className="text-gray-500 text-xs mt-0.5">
+                    {(pct * 8760).toFixed(1)}% ann.
+                    {liveRate !== null && (
+                      <span className="text-green-400/70"> · live ({premiumPoller.samples.length} samples, {remaining}m left)</span>
+                    )}
+                    {predictedFunding && (
+                      <>{' · '}settles {new Date(predictedFunding.nextTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</>
+                    )}
+                  </div>
+                </>
+              );
+            })()}
           </div>
         </div>
       )}
