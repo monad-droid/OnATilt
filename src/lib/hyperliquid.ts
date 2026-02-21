@@ -184,6 +184,10 @@ export interface AssetContext {
  * Returns real API values — not derived.
  */
 export async function fetchAssetContext(coin: string): Promise<AssetContext | null> {
+  const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
+  const tokenPart = coin.includes(':') ? coin.split(':')[1] : null;
+  const namesToTry = tokenPart ? [searchName, tokenPart] : [searchName];
+
   const response = await fetch('https://api.hyperliquid.xyz/info', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -191,54 +195,41 @@ export async function fetchAssetContext(coin: string): Promise<AssetContext | nu
   });
 
   const data = await response.json();
-  const universe: { name: string }[] = data[0]?.universe ?? [];
-  const ctxs: Record<string, string>[] = data[1] ?? [];
 
-  // Match coin name — handle vntl: prefix
-  const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
+  // Response could be [meta, [ctxs]] (2 elements) or [meta0, [ctxs0], meta1, [ctxs1]] (4 elements)
+  // Exchange 0 = regular perps, Exchange 1 = pre-launch/vntl tokens
+  console.log(`[fetchAssetContext] Looking for "${coin}" (try: ${namesToTry.join(', ')}). Response has ${Array.isArray(data) ? data.length : 'non-array'} elements.`);
 
-  // Also try matching just the token part (e.g. "OPENAI" from "vntl:OPENAI")
-  const tokenPart = coin.includes(':') ? coin.split(':')[1] : null;
+  // Check each pair of [meta, ctxs] in the response
+  for (let exIdx = 0; exIdx * 2 + 1 < data.length; exIdx++) {
+    const metaIdx = exIdx * 2;
+    const ctxIdx = metaIdx + 1;
+    const universe: { name: string }[] = data[metaIdx]?.universe ?? [];
+    const ctxs: Record<string, string>[] = data[ctxIdx] ?? [];
 
-  for (let i = 0; i < universe.length; i++) {
-    if (universe[i].name === searchName) {
-      const ctx = ctxs[i];
-      return {
-        coin: universe[i].name,
-        markPx: ctx.markPx ?? '0',
-        oraclePx: ctx.oraclePx ?? '0',
-        premium: ctx.premium ?? '0',
-        funding: ctx.funding ?? '0',
-        openInterest: ctx.openInterest ?? '0',
-      };
-    }
-  }
-
-  // Fallback: try matching just the token name without prefix
-  if (tokenPart) {
-    for (let i = 0; i < universe.length; i++) {
-      if (universe[i].name === tokenPart) {
-        console.log(`[fetchAssetContext] Matched "${coin}" via token fallback → universe name "${universe[i].name}"`);
-        const ctx = ctxs[i];
-        return {
-          coin: universe[i].name,
-          markPx: ctx.markPx ?? '0',
-          oraclePx: ctx.oraclePx ?? '0',
-          premium: ctx.premium ?? '0',
-          funding: ctx.funding ?? '0',
-          openInterest: ctx.openInterest ?? '0',
-        };
+    for (const name of namesToTry) {
+      for (let i = 0; i < universe.length; i++) {
+        if (universe[i].name === name) {
+          console.log(`[fetchAssetContext] ✓ Matched "${coin}" → "${universe[i].name}" (exchange ${exIdx}, index ${i})`);
+          const ctx = ctxs[i];
+          return {
+            coin: universe[i].name,
+            markPx: ctx.markPx ?? '0',
+            oraclePx: ctx.oraclePx ?? '0',
+            premium: ctx.premium ?? '0',
+            funding: ctx.funding ?? '0',
+            openInterest: ctx.openInterest ?? '0',
+          };
+        }
       }
     }
-    // Log what names contain the token for debugging
-    const similar = universe
-      .filter(u => u.name.toUpperCase().includes(tokenPart.toUpperCase()))
-      .map(u => u.name);
-    if (similar.length > 0) {
-      console.log(`[fetchAssetContext] No exact match for "${searchName}" or "${tokenPart}". Similar names found: ${similar.join(', ')}`);
-    } else {
-      console.log(`[fetchAssetContext] No match for "${searchName}" or "${tokenPart}". No similar names found in ${universe.length} assets.`);
-    }
+
+    // Log what's in this exchange for debugging
+    const similar = tokenPart
+      ? universe.filter(u => u.name.toUpperCase().includes(tokenPart.toUpperCase())).map(u => u.name)
+      : [];
+    const sample = universe.slice(-5).map(u => u.name);
+    console.log(`[fetchAssetContext] Exchange ${exIdx}: ${universe.length} assets, no match. Similar: [${similar.join(', ')}]. Last 5: [${sample.join(', ')}]`);
   }
 
   return null;
