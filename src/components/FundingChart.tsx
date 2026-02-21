@@ -41,7 +41,12 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
   const [crosshairPrices, setCrosshairPrices] = useState<{ trade: number; oracle: number; diff: number } | null>(null);
   const [crosshairFundingRate, setCrosshairFundingRate] = useState<number | null>(null);
-  const lastSyncTime = useRef(0);
+  const syncCharts = useCallback(() => {
+    const fundingRange = chartRef.current?.timeScale().getVisibleRange();
+    if (fundingRange && priceChartRef.current) {
+      priceChartRef.current.timeScale().setVisibleRange(fundingRange);
+    }
+  }, []);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const raw = overrideCoin ?? coin;
@@ -183,15 +188,6 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     histogramSeries.setData(histogramData);
     chart.timeScale().fitContent();
 
-    // Sync zoom with price chart (timestamp debounce prevents feedback loops)
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      if (Date.now() - lastSyncTime.current < 50) return;
-      const timeRange = chart.timeScale().getVisibleRange();
-      if (!timeRange) return;
-      lastSyncTime.current = Date.now();
-      priceChartRef.current?.timeScale().setVisibleRange(timeRange);
-    });
-
     // Crosshair move: show funding rate value
     chart.subscribeCrosshairMove((param) => {
       if (!param.time || !param.seriesData) {
@@ -318,24 +314,6 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     tradeSeries.setData(tradeData);
     oracleSeries.setData(oracleData);
     chart.timeScale().fitContent();
-
-    // Sync zoom with funding chart (timestamp debounce prevents feedback loops)
-    chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
-      if (Date.now() - lastSyncTime.current < 50) return;
-      const timeRange = chart.timeScale().getVisibleRange();
-      if (!timeRange) return;
-      lastSyncTime.current = Date.now();
-      chartRef.current?.timeScale().setVisibleRange(timeRange);
-    });
-
-    // Initial sync: align price chart to funding chart's current range
-    if (chartRef.current) {
-      const fundingRange = chartRef.current.timeScale().getVisibleRange();
-      if (fundingRange) {
-        lastSyncTime.current = Date.now();
-        chart.timeScale().setVisibleRange(fundingRange);
-      }
-    }
 
     // Crosshair move: show trade/oracle/diff values
     chart.subscribeCrosshairMove((param) => {
@@ -480,6 +458,13 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         <div className="mt-4">
           <div className="flex items-center gap-4 mb-2">
             <h4 className="text-white text-sm font-medium">Price</h4>
+            <button
+              onClick={syncCharts}
+              className="px-2.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+              title="Snap price chart to funding chart's visible range"
+            >
+              Sync
+            </button>
             <div className="flex items-center gap-3 text-xs">
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
