@@ -472,6 +472,18 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         <div className="mt-1">
           <div className="flex items-center gap-4 mb-1">
             <h4 className="text-white text-sm font-medium">Price</h4>
+            <button
+              onClick={() => {
+                const fundingRange = chartRef.current?.timeScale().getVisibleRange();
+                if (fundingRange && priceChartRef.current) {
+                  priceChartRef.current.timeScale().setVisibleRange(fundingRange);
+                }
+              }}
+              className="px-2.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
+              title="Snap price chart to funding chart's visible range"
+            >
+              Sync
+            </button>
             <div className="flex items-center gap-3 text-xs">
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
