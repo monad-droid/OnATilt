@@ -94,10 +94,17 @@ export default function IntraHourChart({
 
       // Running avg as flat line across the sample range
       const avgValue = runningAvg * 100;
-      avgSeries.setData([
-        { time: toTime(samples[0].time), value: avgValue },
-        { time: toTime(samples[samples.length - 1].time), value: avgValue },
-      ]);
+      const firstTime = toTime(samples[0].time);
+      const lastTime = toTime(samples[samples.length - 1].time);
+      if (firstTime === lastTime) {
+        // Single sample — just one point, no line
+        avgSeries.setData([{ time: firstTime, value: avgValue }]);
+      } else {
+        avgSeries.setData([
+          { time: firstTime, value: avgValue },
+          { time: lastTime, value: avgValue },
+        ]);
+      }
 
       chart.timeScale().fitContent();
     }
