@@ -185,95 +185,48 @@ export interface AssetContext {
  */
 export async function fetchAssetContext(coin: string): Promise<AssetContext | null> {
   const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
+  // HIP-3 coins like "vntl:OPENAI" need dex="vntl" to query their builder-deployed exchange
+  const dex = coin.includes(':') ? coin.split(':')[0].toLowerCase() : '';
 
-  // Try perpsMetaAndAssetCtxs first (covers ALL dexes including HIP-3 like vntl)
-  // Fall back to metaAndAssetCtxs if that fails
-  for (const endpoint of ['perpsMetaAndAssetCtxs', 'metaAndAssetCtxs'] as const) {
-    try {
-      const response = await fetch('https://api.hyperliquid.xyz/info', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: endpoint }),
-      });
+  const response = await fetch('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'metaAndAssetCtxs', ...(dex ? { dex } : {}) }),
+  });
 
-      if (!response.ok) {
-        console.log(`[fetchAssetContext] ${endpoint} returned ${response.status}, trying next...`);
-        continue;
-      }
-
-      const data = await response.json();
-      console.log(`[fetchAssetContext] ${endpoint} response: type=${typeof data}, isArray=${Array.isArray(data)}, length=${Array.isArray(data) ? data.length : 'N/A'}, preview=${JSON.stringify(data).slice(0, 300)}`);
-
-      const result = searchInMetaResponse(data, searchName);
-      if (result) return result;
-
-    } catch (err) {
-      console.log(`[fetchAssetContext] ${endpoint} error: ${err}`);
-      continue;
-    }
-  }
-
-  return null;
-}
-
-function searchInMetaResponse(data: unknown, searchName: string): AssetContext | null {
-  if (!Array.isArray(data)) return null;
-
-  // Format A: [meta, [ctxs]] — 2 elements, metaAndAssetCtxs style
-  if (data.length === 2 && data[0]?.universe && Array.isArray(data[1])) {
-    const universe: { name: string }[] = data[0].universe;
-    const ctxs: Record<string, string>[] = data[1];
-    for (let i = 0; i < universe.length; i++) {
-      if (universe[i].name === searchName) {
-        console.log(`[fetchAssetContext] ✓ Found "${searchName}" (format A, index ${i})`);
-        const ctx = ctxs[i];
-        return {
-          coin: universe[i].name,
-          markPx: ctx.markPx ?? '0',
-          oraclePx: ctx.oraclePx ?? '0',
-          premium: ctx.premium ?? '0',
-          funding: ctx.funding ?? '0',
-          openInterest: ctx.openInterest ?? '0',
-        };
-      }
-    }
+  if (!response.ok) {
+    console.log(`[fetchAssetContext] metaAndAssetCtxs (dex=${dex || 'default'}) returned ${response.status}`);
     return null;
   }
 
-  // Format B: array of dex entries — each entry could be [meta, [ctxs]] or {universe, assetCtxs}
-  for (let dexIdx = 0; dexIdx < data.length; dexIdx++) {
-    const entry = data[dexIdx];
-    let universe: { name: string }[] = [];
-    let ctxs: Record<string, string>[] = [];
+  const data = await response.json();
+  const universe: { name: string }[] = data[0]?.universe ?? [];
+  const ctxs: Record<string, string>[] = data[1] ?? [];
 
-    if (Array.isArray(entry) && entry.length === 2) {
-      // [meta, [ctxs]]
-      universe = entry[0]?.universe ?? [];
-      ctxs = entry[1] ?? [];
-    } else if (entry?.universe) {
-      // {universe: [...], assetCtxs: [...]}
-      universe = entry.universe;
-      ctxs = entry.assetCtxs ?? [];
-    }
+  // HIP-3 dex universe lists coins without the dex prefix (e.g. "OPENAI" not "vntl:OPENAI")
+  const coinName = dex ? searchName.split(':')[1] : searchName;
 
-    for (let i = 0; i < universe.length; i++) {
-      if (universe[i].name === searchName) {
-        console.log(`[fetchAssetContext] ✓ Found "${searchName}" (format B, dex ${dexIdx}, index ${i})`);
-        const ctx = ctxs[i];
-        return {
-          coin: universe[i].name,
-          markPx: ctx.markPx ?? '0',
-          oraclePx: ctx.oraclePx ?? '0',
-          premium: ctx.premium ?? '0',
-          funding: ctx.funding ?? '0',
-          openInterest: ctx.openInterest ?? '0',
-        };
-      }
+  for (let i = 0; i < universe.length; i++) {
+    if (universe[i].name === coinName) {
+      console.log(`[fetchAssetContext] ✓ Found "${coin}" → "${universe[i].name}" (dex=${dex || 'default'}, index ${i})`);
+      const ctx = ctxs[i];
+      return {
+        coin: universe[i].name,
+        markPx: ctx.markPx ?? '0',
+        oraclePx: ctx.oraclePx ?? '0',
+        premium: ctx.premium ?? '0',
+        funding: ctx.funding ?? '0',
+        openInterest: ctx.openInterest ?? '0',
+      };
     }
   }
 
+  // Debug: log what's in this dex's universe
+  const sample = universe.slice(0, 10).map(u => u.name);
+  console.log(`[fetchAssetContext] "${coinName}" not found in ${universe.length} assets (dex=${dex || 'default'}). First 10: [${sample.join(', ')}]`);
   return null;
 }
+
 
 export async function fetchOrderbook(coin: string) {
   const response = await fetch('https://api.hyperliquid.xyz/info', {
