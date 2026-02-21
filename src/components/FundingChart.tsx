@@ -40,6 +40,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [priceData, setPriceData] = useState<Candle[]>([]);
   const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
   const [crosshairPrices, setCrosshairPrices] = useState<{ trade: number; oracle: number; diff: number } | null>(null);
+  const [crosshairFundingRate, setCrosshairFundingRate] = useState<number | null>(null);
   const isSyncing = useRef(false);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
@@ -190,6 +191,20 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       isSyncing.current = true;
       priceChartRef.current?.timeScale().setVisibleRange(timeRange);
       isSyncing.current = false;
+    });
+
+    // Crosshair move: show funding rate value
+    chart.subscribeCrosshairMove((param) => {
+      if (!param.time || !param.seriesData) {
+        setCrosshairFundingRate(null);
+        return;
+      }
+      const point = param.seriesData.get(histogramSeries) as { value?: number } | undefined;
+      if (point?.value !== undefined) {
+        setCrosshairFundingRate(point.value);
+      } else {
+        setCrosshairFundingRate(null);
+      }
     });
 
     // Handle resize
@@ -411,6 +426,16 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       )}
 
       {/* Funding Rate Chart */}
+      {fundingData.length > 0 && (
+        <div className="flex items-center gap-3 mb-2">
+          <h4 className="text-white text-sm font-medium">Funding Rate</h4>
+          {crosshairFundingRate !== null && (
+            <span className={`text-xs font-medium ${crosshairFundingRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+              {crosshairFundingRate >= 0 ? '+' : ''}{crosshairFundingRate.toFixed(6)}%
+            </span>
+          )}
+        </div>
+      )}
       <div ref={chartContainerRef} />
 
       {/* Current Prices (real API values from metaAndAssetCtxs) */}
