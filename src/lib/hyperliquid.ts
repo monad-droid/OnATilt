@@ -203,8 +203,8 @@ export async function fetchAssetContext(coin: string): Promise<AssetContext | nu
   const universe: { name: string }[] = data[0]?.universe ?? [];
   const ctxs: Record<string, string>[] = data[1] ?? [];
 
-  // HIP-3 dex universe lists coins without the dex prefix (e.g. "OPENAI" not "vntl:OPENAI")
-  const coinName = dex ? searchName.split(':')[1] : searchName;
+  // HIP-3 dex universe keeps the full prefixed name (e.g. "vntl:OPENAI")
+  const coinName = searchName;
 
   for (let i = 0; i < universe.length; i++) {
     if (universe[i].name === coinName) {
