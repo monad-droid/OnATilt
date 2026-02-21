@@ -170,6 +170,50 @@ export async function fetchAllMids(): Promise<Record<string, string>> {
   return response.json();
 }
 
+export interface AssetContext {
+  coin: string;
+  markPx: string;
+  oraclePx: string;
+  premium: string;
+  funding: string;
+  openInterest: string;
+}
+
+/**
+ * Fetch current oracle and mark prices for a specific coin from metaAndAssetCtxs.
+ * Returns real API values — not derived.
+ */
+export async function fetchAssetContext(coin: string): Promise<AssetContext | null> {
+  const response = await fetch('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'metaAndAssetCtxs' }),
+  });
+
+  const data = await response.json();
+  const universe: { name: string }[] = data[0]?.universe ?? [];
+  const ctxs: Record<string, string>[] = data[1] ?? [];
+
+  // Match coin name — handle vntl: prefix
+  const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
+
+  for (let i = 0; i < universe.length; i++) {
+    if (universe[i].name === searchName) {
+      const ctx = ctxs[i];
+      return {
+        coin: universe[i].name,
+        markPx: ctx.markPx ?? '0',
+        oraclePx: ctx.oraclePx ?? '0',
+        premium: ctx.premium ?? '0',
+        funding: ctx.funding ?? '0',
+        openInterest: ctx.openInterest ?? '0',
+      };
+    }
+  }
+
+  return null;
+}
+
 export async function fetchOrderbook(coin: string) {
   const response = await fetch('https://api.hyperliquid.xyz/info', {
     method: 'POST',

@@ -39,6 +39,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [fundingData, setFundingData] = useState<FundingRate[]>([]);
   const [priceData, setPriceData] = useState<Candle[]>([]);
   const [crosshairPrices, setCrosshairPrices] = useState<{ oracle: number; mark: number; diff: number } | null>(null);
+  const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const c = overrideCoin ?? coin;
@@ -66,21 +67,45 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
       setFundingData(data.fundingHistory || []);
 
-      // Fetch hourly candle data for oracle price chart
-      // Keep vntl: prefix for venture tokens — Hyperliquid needs it
-      const candleCoin = c.replace('-PERP', '');
-      const candleRes = await fetch('/api/market-data', {
+      // Fetch current real oracle/mark prices from API
+      const ctxRes = await fetch('/api/market-data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action: 'candles',
-          coin: candleCoin,
-          timeframe: '1h',
-          limit: days * 24,
-        }),
+        body: JSON.stringify({ action: 'asset-context', coin: c }),
       });
-      const candleData = await candleRes.json();
-      setPriceData(candleData.candles || []);
+      const ctxData = await ctxRes.json();
+      if (ctxData.context) {
+        setCurrentPrices({
+          markPx: parseFloat(ctxData.context.markPx),
+          oraclePx: parseFloat(ctxData.context.oraclePx),
+          premium: parseFloat(ctxData.context.premium),
+        });
+      } else {
+        setCurrentPrices(null);
+      }
+
+      // Fetch hourly candle data for price chart (non-fatal — some tokens don't have candles)
+      try {
+        const candleCoin = c.replace('-PERP', '');
+        const candleRes = await fetch('/api/market-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            action: 'candles',
+            coin: candleCoin,
+            timeframe: '1h',
+            limit: days * 24,
+          }),
+        });
+        if (candleRes.ok) {
+          const candleData = await candleRes.json();
+          setPriceData(candleData.candles || []);
+        } else {
+          setPriceData([]);
+        }
+      } catch {
+        setPriceData([]);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to fetch funding data');
     } finally {
@@ -358,7 +383,37 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       {/* Funding Rate Chart */}
       <div ref={chartContainerRef} />
 
-      {/* Mark vs Oracle Price Chart */}
+      {/* Current Prices (real API values from metaAndAssetCtxs) */}
+      {currentPrices && (
+        <div className="mt-4 grid grid-cols-3 gap-3">
+          <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+            <div className="text-gray-400 text-xs mb-1">Mark Price</div>
+            <div className="text-lg font-semibold text-[#06b6d4]">${currentPrices.markPx.toFixed(4)}</div>
+            <div className="text-gray-500 text-xs mt-0.5">live from API</div>
+          </div>
+          <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+            <div className="text-gray-400 text-xs mb-1">Oracle Price</div>
+            <div className="text-lg font-semibold text-[#8b5cf6]">${currentPrices.oraclePx.toFixed(4)}</div>
+            <div className="text-gray-500 text-xs mt-0.5">live from API</div>
+          </div>
+          <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+            <div className="text-gray-400 text-xs mb-1">Mark-Oracle Diff</div>
+            {(() => {
+              const diff = currentPrices.oraclePx > 0
+                ? ((currentPrices.markPx - currentPrices.oraclePx) / currentPrices.oraclePx) * 100
+                : 0;
+              return (
+                <div className={`text-lg font-semibold ${diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {diff >= 0 ? '+' : ''}{diff.toFixed(4)}%
+                </div>
+              );
+            })()}
+            <div className="text-gray-500 text-xs mt-0.5">premium={currentPrices.premium.toFixed(6)}</div>
+          </div>
+        </div>
+      )}
+
+      {/* Mark vs Oracle Price Chart (historical) */}
       {priceData.length > 0 && (
         <div className="mt-4">
           <div className="flex items-center justify-between mb-2">
@@ -371,7 +426,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
                 </span>
                 <span className="flex items-center gap-1.5">
                   <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
-                  <span className="text-gray-400">Oracle</span>
+                  <span className="text-gray-400">Oracle (derived)</span>
                 </span>
               </div>
             </div>
@@ -419,6 +474,9 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
             })()}
           </div>
           <div ref={priceChartContainerRef} />
+          <div className="text-gray-600 text-xs mt-1">
+            Mark price from candle data. Historical oracle derived from mark / (1 + premium) — no historical oracle API exists.
+          </div>
         </div>
       )}
 

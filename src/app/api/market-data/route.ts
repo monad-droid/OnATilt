@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchCandles, fetchAllMids, fetchAssets, fetchOrderbook } from '@/lib/hyperliquid';
+import { fetchCandles, fetchAllMids, fetchAssets, fetchOrderbook, fetchAssetContext } from '@/lib/hyperliquid';
 import type { Timeframe } from '@/types';
 
 export async function POST(request: NextRequest) {
@@ -34,6 +34,15 @@ export async function POST(request: NextRequest) {
         }
         const orderbook = await fetchOrderbook(coin);
         return NextResponse.json({ orderbook });
+      }
+
+      case 'asset-context': {
+        const { coin } = body;
+        if (!coin) {
+          return NextResponse.json({ error: 'coin required' }, { status: 400 });
+        }
+        const context = await fetchAssetContext(coin);
+        return NextResponse.json({ context });
       }
 
       default:
