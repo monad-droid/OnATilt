@@ -26,12 +26,42 @@ function toTime(ms: number): UTCTimestamp {
   return (ms / 1000) as UTCTimestamp;
 }
 
+/**
+ * Convert a chart's visible logical range (bar indices) to a time range
+ * by interpolating into the data's timestamp array. Works even when
+ * getVisibleRange() returns null (sparse data with lots of whitespace).
+ */
+function logicalRangeToTimeRange(
+  chart: IChartApi,
+  times: UTCTimestamp[],
+): { from: UTCTimestamp; to: UTCTimestamp } | null {
+  if (times.length === 0) return null;
+  const lr = chart.timeScale().getVisibleLogicalRange();
+  if (!lr) return null;
+
+  const last = times.length - 1;
+
+  // Clamp + interpolate fractional bar indices to timestamps
+  const interpTime = (idx: number): UTCTimestamp => {
+    if (idx <= 0) return times[0];
+    if (idx >= last) return times[last];
+    const floor = Math.floor(idx);
+    const frac = idx - floor;
+    const t0 = times[floor];
+    const t1 = times[Math.min(floor + 1, last)];
+    return (t0 + (t1 - t0) * frac) as UTCTimestamp;
+  };
+
+  return { from: interpTime(lr.from), to: interpTime(lr.to) };
+}
+
 export default function FundingChart({ height = 600 }: FundingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const priceChartContainerRef = useRef<HTMLDivElement>(null);
   const priceChartRef = useRef<IChartApi | null>(null);
   const activeChart = useRef<'funding' | 'price' | null>(null);
+  const fundingTimes = useRef<UTCTimestamp[]>([]);
 
   const [coin, setCoin] = useState('vntl:OPENAI');
   const [range, setRange] = useState<RangeOption>('30d');
@@ -180,14 +210,19 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     });
 
     histogramSeries.setData(histogramData);
+
+    // Store timestamps so sync can map logical bar indices → times
+    const times = histogramData.map(d => d.time);
+    fundingTimes.current = times;
+
     chart.timeScale().fitContent();
 
     // Sync: only push to price chart when user is interacting with THIS chart
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
       if (activeChart.current !== 'funding') return;
-      const timeRange = chart.timeScale().getVisibleRange();
-      if (!timeRange) return;
-      priceChartRef.current?.timeScale().setVisibleRange(timeRange);
+      const range = logicalRangeToTimeRange(chart, fundingTimes.current);
+      if (!range) return;
+      priceChartRef.current?.timeScale().setVisibleRange(range);
     });
 
     chart.subscribeCrosshairMove((param) => {
@@ -310,18 +345,19 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     chart.timeScale().fitContent();
 
     // Sync: only push to funding chart when user is interacting with THIS chart
+    const priceTimes = tradeData.map(d => d.time);
     chart.timeScale().subscribeVisibleLogicalRangeChange(() => {
       if (activeChart.current !== 'price') return;
-      const timeRange = chart.timeScale().getVisibleRange();
-      if (!timeRange) return;
-      chartRef.current?.timeScale().setVisibleRange(timeRange);
+      const range = logicalRangeToTimeRange(chart, priceTimes);
+      if (!range) return;
+      chartRef.current?.timeScale().setVisibleRange(range);
     });
 
     // Initial sync: snap to funding chart's current time range
     if (chartRef.current) {
-      const fundingRange = chartRef.current.timeScale().getVisibleRange();
-      if (fundingRange) {
-        chart.timeScale().setVisibleRange(fundingRange);
+      const range = logicalRangeToTimeRange(chartRef.current, fundingTimes.current);
+      if (range) {
+        chart.timeScale().setVisibleRange(range);
       }
     }
 
@@ -474,9 +510,10 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
             <h4 className="text-white text-sm font-medium">Price</h4>
             <button
               onClick={() => {
-                const timeRange = chartRef.current?.timeScale().getVisibleRange();
-                if (timeRange && priceChartRef.current) {
-                  priceChartRef.current.timeScale().setVisibleRange(timeRange);
+                if (!chartRef.current || !priceChartRef.current) return;
+                const range = logicalRangeToTimeRange(chartRef.current, fundingTimes.current);
+                if (range) {
+                  priceChartRef.current.timeScale().setVisibleRange(range);
                 }
               }}
               className="px-2.5 py-0.5 bg-gray-800 border border-gray-700 rounded text-xs text-gray-300 hover:bg-gray-700 hover:text-white transition-colors"
