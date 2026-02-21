@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   createChart,
   HistogramSeries,
@@ -64,7 +64,12 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         return;
       }
 
-      setFundingData(data.fundingHistory || []);
+      const history = data.fundingHistory || [];
+      setFundingData(history);
+
+      if (history.length === 0) {
+        setError(`No funding data returned for "${c}". Check the coin symbol matches exactly (e.g. vntl:OPENAI, vntl:ANTHROPIC).`);
+      }
 
       // Fetch current real oracle/mark prices from API
       const ctxRes = await fetch('/api/market-data', {
@@ -191,7 +196,17 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     };
   }, [fundingData, height]);
 
-  // Render trade price chart when candle data changes
+  // Build premium map from funding data for oracle estimate
+  const premiumMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const f of fundingData) {
+      const hourKey = Math.round(f.time / 3_600_000) * 3_600_000;
+      map.set(hourKey, parseFloat(f.premium));
+    }
+    return map;
+  }, [fundingData]);
+
+  // Render price chart with trade price + oracle estimate
   useEffect(() => {
     if (!priceChartContainerRef.current || priceData.length === 0) return;
 
@@ -228,10 +243,11 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
     priceChartRef.current = chart;
 
-    const priceSeries = chart.addSeries(LineSeries, {
+    // Trade price line (cyan)
+    const tradeSeries = chart.addSeries(LineSeries, {
       color: '#06b6d4',
       lineWidth: 2,
-      title: 'Price',
+      title: 'Trade',
       priceFormat: {
         type: 'price',
         precision: 4,
@@ -239,12 +255,37 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       },
     });
 
-    const lineData = priceData.map(c => ({
+    // Oracle estimate line (purple) — trade / (1 + premium)
+    const oracleSeries = chart.addSeries(LineSeries, {
+      color: '#8b5cf6',
+      lineWidth: 2,
+      title: 'Oracle (est.)',
+      priceFormat: {
+        type: 'price',
+        precision: 4,
+        minMove: 0.0001,
+      },
+    });
+
+    const tradeData = priceData.map(c => ({
       time: toTime(c.time),
       value: c.close,
     }));
 
-    priceSeries.setData(lineData);
+    const oracleData = priceData
+      .map(c => {
+        const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
+        const premium = premiumMap.get(hourKey);
+        if (premium === undefined) return null;
+        return {
+          time: toTime(c.time),
+          value: c.close / (1 + premium),
+        };
+      })
+      .filter((d): d is { time: UTCTimestamp; value: number } => d !== null);
+
+    tradeSeries.setData(tradeData);
+    oracleSeries.setData(oracleData);
     chart.timeScale().fitContent();
 
     const handleResize = () => {
@@ -265,7 +306,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         priceChartRef.current = null;
       }
     };
-  }, [priceData]);
+  }, [priceData, premiumMap]);
 
   // Compute stats
   const stats = computeStats(fundingData);
@@ -355,10 +396,22 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         </div>
       )}
 
-      {/* Trade Price Chart (historical) */}
+      {/* Price Chart (historical) */}
       {priceData.length > 0 && (
         <div className="mt-4">
-          <h4 className="text-white text-sm font-medium mb-2">Trade Price</h4>
+          <div className="flex items-center gap-4 mb-2">
+            <h4 className="text-white text-sm font-medium">Price</h4>
+            <div className="flex items-center gap-3 text-xs">
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
+                <span className="text-gray-400">Trade</span>
+              </span>
+              <span className="flex items-center gap-1.5">
+                <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
+                <span className="text-gray-400">Oracle (est.)</span>
+              </span>
+            </div>
+          </div>
           <div ref={priceChartContainerRef} />
         </div>
       )}
