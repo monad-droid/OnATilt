@@ -245,6 +245,50 @@ export async function fetchOpenOrders(walletAddress: string) {
 }
 
 // ============================================================
+// Predicted Funding Rates
+// ============================================================
+
+export interface PredictedFunding {
+  fundingRate: string;
+  nextFundingTime: number; // ms epoch
+}
+
+/**
+ * Fetch predicted funding rate for a coin from the predictedFundings endpoint.
+ * Returns the Hyperliquid perp prediction, or null if not available.
+ */
+export async function fetchPredictedFunding(coin: string): Promise<PredictedFunding | null> {
+  const response = await fetch('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'predictedFundings' }),
+  });
+
+  const data = await response.json();
+  if (!Array.isArray(data)) return null;
+
+  const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
+
+  for (const entry of data) {
+    if (!Array.isArray(entry) || entry.length < 2) continue;
+    const [name, venues] = entry;
+    if (name !== searchName) continue;
+
+    // Find Hyperliquid perp venue
+    for (const v of venues) {
+      if (v?.venue === 'HlPerp' && v.fundingRate && v.nextFundingTime) {
+        return {
+          fundingRate: v.fundingRate,
+          nextFundingTime: v.nextFundingTime,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+// ============================================================
 // Funding Rate History
 // ============================================================
 

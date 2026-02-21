@@ -40,6 +40,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
   const [crosshairPrices, setCrosshairPrices] = useState<{ trade: number; oracle: number; diff: number } | null>(null);
   const [crosshairFundingRate, setCrosshairFundingRate] = useState<number | null>(null);
+  const [predictedFunding, setPredictedFunding] = useState<{ rate: number; nextTime: number } | null>(null);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const raw = overrideCoin ?? coin;
@@ -77,12 +78,19 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         setError(`No funding data returned for "${c}". Check the coin symbol matches exactly (e.g. vntl:OPENAI, vntl:ANTHROPIC).`);
       }
 
-      // Fetch current real oracle/mark prices from API
-      const ctxRes = await fetch('/api/market-data', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'asset-context', coin: c }),
-      });
+      // Fetch current prices + predicted funding in parallel
+      const [ctxRes, predRes] = await Promise.all([
+        fetch('/api/market-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'asset-context', coin: c }),
+        }),
+        fetch('/api/market-data', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'predicted-funding', coin: c }),
+        }),
+      ]);
       const ctxData = await ctxRes.json();
       if (ctxData.context) {
         setCurrentPrices({
@@ -92,6 +100,15 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         });
       } else {
         setCurrentPrices(null);
+      }
+      const predData = await predRes.json();
+      if (predData.predicted) {
+        setPredictedFunding({
+          rate: parseFloat(predData.predicted.fundingRate),
+          nextTime: predData.predicted.nextFundingTime,
+        });
+      } else {
+        setPredictedFunding(null);
       }
 
       // Fetch hourly candle data for price chart (non-fatal — some tokens don't have candles)
@@ -386,7 +403,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
       {/* Current Prices (real API values from metaAndAssetCtxs) */}
       {currentPrices && (
-        <div className="mt-4 grid grid-cols-3 gap-3">
+        <div className="mt-4 grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
             <div className="text-gray-400 text-xs mb-1">Mark Price</div>
             <div className="text-lg font-semibold text-[#06b6d4]">${currentPrices.markPx.toFixed(4)}</div>
@@ -410,6 +427,21 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
               );
             })()}
             <div className="text-gray-500 text-xs mt-0.5">premium={currentPrices.premium.toFixed(6)}</div>
+          </div>
+          <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+            <div className="text-gray-400 text-xs mb-1">Next Funding</div>
+            {predictedFunding ? (
+              <>
+                <div className={`text-lg font-semibold ${predictedFunding.rate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {predictedFunding.rate >= 0 ? '+' : ''}{(predictedFunding.rate * 100).toFixed(4)}%
+                </div>
+                <div className="text-gray-500 text-xs mt-0.5">
+                  settles {new Date(predictedFunding.nextTime).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                </div>
+              </>
+            ) : (
+              <div className="text-gray-500 text-sm">unavailable</div>
+            )}
           </div>
         </div>
       )}

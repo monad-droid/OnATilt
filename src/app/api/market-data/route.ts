@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchCandles, fetchAllMids, fetchAssets, fetchOrderbook, fetchAssetContext } from '@/lib/hyperliquid';
+import { fetchCandles, fetchAllMids, fetchAssets, fetchOrderbook, fetchAssetContext, fetchPredictedFunding } from '@/lib/hyperliquid';
 import type { Timeframe } from '@/types';
 
 export async function POST(request: NextRequest) {
@@ -43,6 +43,15 @@ export async function POST(request: NextRequest) {
         }
         const context = await fetchAssetContext(coin);
         return NextResponse.json({ context });
+      }
+
+      case 'predicted-funding': {
+        const { coin } = body;
+        if (!coin) {
+          return NextResponse.json({ error: 'coin required' }, { status: 400 });
+        }
+        const predicted = await fetchPredictedFunding(coin);
+        return NextResponse.json({ predicted });
       }
 
       default:
