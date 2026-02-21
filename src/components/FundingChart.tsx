@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useState, useCallback } from 'react';
 import {
   createChart,
   HistogramSeries,
@@ -38,7 +38,6 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [error, setError] = useState<string | null>(null);
   const [fundingData, setFundingData] = useState<FundingRate[]>([]);
   const [priceData, setPriceData] = useState<Candle[]>([]);
-  const [crosshairPrices, setCrosshairPrices] = useState<{ oracle: number; mark: number; diff: number } | null>(null);
   const [currentPrices, setCurrentPrices] = useState<{ markPx: number; oraclePx: number; premium: number } | null>(null);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
@@ -192,18 +191,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     };
   }, [fundingData, height]);
 
-  // Build premium map from funding data (keyed by hourly timestamp)
-  const premiumMap = useMemo(() => {
-    const map = new Map<number, number>();
-    for (const f of fundingData) {
-      // Round to nearest hour boundary for matching
-      const hourKey = Math.round(f.time / 3_600_000) * 3_600_000;
-      map.set(hourKey, parseFloat(f.premium));
-    }
-    return map;
-  }, [fundingData]);
-
-  // Render mark + oracle price chart when data changes
+  // Render trade price chart when candle data changes
   useEffect(() => {
     if (!priceChartContainerRef.current || priceData.length === 0) return;
 
@@ -240,11 +228,10 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
     priceChartRef.current = chart;
 
-    // Mark price line (cyan) — candleSnapshot returns mark price candles
-    const markSeries = chart.addSeries(LineSeries, {
+    const priceSeries = chart.addSeries(LineSeries, {
       color: '#06b6d4',
       lineWidth: 2,
-      title: 'Mark',
+      title: 'Price',
       priceFormat: {
         type: 'price',
         precision: 4,
@@ -252,58 +239,13 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       },
     });
 
-    // Oracle price line (purple) — derived: oracle = mark / (1 + premium)
-    const oracleSeries = chart.addSeries(LineSeries, {
-      color: '#8b5cf6',
-      lineWidth: 2,
-      title: 'Oracle',
-      priceFormat: {
-        type: 'price',
-        precision: 4,
-        minMove: 0.0001,
-      },
-    });
-
-    const markLineData = priceData.map(c => ({
+    const lineData = priceData.map(c => ({
       time: toTime(c.time),
       value: c.close,
     }));
 
-    const oracleLineData = priceData
-      .map(c => {
-        const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
-        const premium = premiumMap.get(hourKey);
-        if (premium === undefined) return null;
-        return {
-          time: toTime(c.time),
-          value: c.close / (1 + premium),
-        };
-      })
-      .filter((d): d is { time: UTCTimestamp; value: number } => d !== null);
-
-    markSeries.setData(markLineData);
-    oracleSeries.setData(oracleLineData);
+    priceSeries.setData(lineData);
     chart.timeScale().fitContent();
-
-    // Track crosshair for live oracle/mark readout
-    chart.subscribeCrosshairMove((param) => {
-      if (!param.time || !param.seriesData) {
-        setCrosshairPrices(null);
-        return;
-      }
-      const markPoint = param.seriesData.get(markSeries) as { value?: number } | undefined;
-      const oraclePoint = param.seriesData.get(oracleSeries) as { value?: number } | undefined;
-      const markVal = markPoint?.value;
-      const oracleVal = oraclePoint?.value;
-      if (markVal !== undefined && oracleVal !== undefined) {
-        const diff = ((markVal - oracleVal) / oracleVal) * 100;
-        setCrosshairPrices({ oracle: oracleVal, mark: markVal, diff });
-      } else if (markVal !== undefined) {
-        setCrosshairPrices({ oracle: 0, mark: markVal, diff: 0 });
-      } else {
-        setCrosshairPrices(null);
-      }
-    });
 
     const handleResize = () => {
       if (priceChartContainerRef.current && priceChartRef.current) {
@@ -323,7 +265,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         priceChartRef.current = null;
       }
     };
-  }, [priceData, premiumMap]);
+  }, [priceData]);
 
   // Compute stats
   const stats = computeStats(fundingData);
@@ -413,70 +355,11 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         </div>
       )}
 
-      {/* Mark vs Oracle Price Chart (historical) */}
+      {/* Trade Price Chart (historical) */}
       {priceData.length > 0 && (
         <div className="mt-4">
-          <div className="flex items-center justify-between mb-2">
-            <div className="flex items-center gap-4">
-              <h4 className="text-white text-sm font-medium">Mark vs Oracle Price</h4>
-              <div className="flex items-center gap-3 text-xs">
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
-                  <span className="text-gray-400">Mark</span>
-                </span>
-                <span className="flex items-center gap-1.5">
-                  <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
-                  <span className="text-gray-400">Oracle (derived)</span>
-                </span>
-              </div>
-            </div>
-            {(() => {
-              // Use crosshair values if hovering, otherwise fall back to latest
-              let oracle: number | undefined;
-              let mark: number | undefined;
-              let diff: number | undefined;
-
-              if (crosshairPrices) {
-                oracle = crosshairPrices.oracle;
-                mark = crosshairPrices.mark;
-                diff = crosshairPrices.diff;
-              } else {
-                const latestCandle = priceData[priceData.length - 1];
-                if (latestCandle) {
-                  const hourKey = Math.round(latestCandle.time / 3_600_000) * 3_600_000;
-                  const premium = premiumMap.get(hourKey);
-                  mark = latestCandle.close;
-                  if (premium !== undefined) {
-                    oracle = mark / (1 + premium);
-                    diff = premium * 100;
-                  }
-                }
-              }
-
-              if (mark === undefined) return null;
-              return (
-                <div className="flex items-center gap-3 text-xs">
-                  <span className="text-gray-400">
-                    Mark: <span className="text-[#06b6d4] font-medium">${mark.toFixed(4)}</span>
-                  </span>
-                  {oracle !== undefined && oracle > 0 && (
-                    <span className="text-gray-400">
-                      Oracle: <span className="text-[#8b5cf6] font-medium">${oracle.toFixed(4)}</span>
-                    </span>
-                  )}
-                  {diff !== undefined && (
-                    <span className={`font-medium ${diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                      {diff >= 0 ? '+' : ''}{diff.toFixed(4)}%
-                    </span>
-                  )}
-                </div>
-              );
-            })()}
-          </div>
+          <h4 className="text-white text-sm font-medium mb-2">Trade Price</h4>
           <div ref={priceChartContainerRef} />
-          <div className="text-gray-600 text-xs mt-1">
-            Mark price from candle data. Historical oracle derived from mark / (1 + premium) — no historical oracle API exists.
-          </div>
         </div>
       )}
 
