@@ -190,7 +190,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       if (!timeRange) return;
       isSyncing.current = true;
       priceChartRef.current?.timeScale().setVisibleRange(timeRange);
-      isSyncing.current = false;
+      requestAnimationFrame(() => { isSyncing.current = false; });
     });
 
     // Crosshair move: show funding rate value
@@ -327,7 +327,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       if (!timeRange) return;
       isSyncing.current = true;
       chartRef.current?.timeScale().setVisibleRange(timeRange);
-      isSyncing.current = false;
+      requestAnimationFrame(() => { isSyncing.current = false; });
     });
 
     // Crosshair move: show trade/oracle/diff values
