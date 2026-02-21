@@ -32,6 +32,10 @@ function toTime(ms: number): UTCTimestamp {
 export default function FundingChart({ height = 600 }: FundingChartProps) {
   const chartContainerRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const tradeSeriesRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const oracleSeriesRef = useRef<any>(null);
 
   const [coin, setCoin] = useState('vntl:OPENAI');
   const [range, setRange] = useState<RangeOption>('30d');
@@ -246,6 +250,9 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
       tradeSeries.setData(tradeData);
       oracleSeries.setData(oracleData);
+
+      tradeSeriesRef.current = tradeSeries;
+      oracleSeriesRef.current = oracleSeries;
     }
 
     // --- Pane 1 (bottom): Funding rate histogram ---
@@ -314,12 +321,59 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
     return () => {
       resizeObserver.disconnect();
+      tradeSeriesRef.current = null;
+      oracleSeriesRef.current = null;
       if (chartRef.current) {
         chartRef.current.remove();
         chartRef.current = null;
       }
     };
   }, [fundingData, priceData, premiumByHour, fundingByHour, height]);
+
+  // Stream live mark/oracle prices from the premium poller onto the price chart
+  useEffect(() => {
+    if (!tradeSeriesRef.current || !oracleSeriesRef.current) return;
+    if (premiumPoller.samples.length === 0 || priceData.length === 0) return;
+
+    // Rebuild historical arrays
+    const tradeData = priceData.map(c => ({
+      time: toTime(c.time),
+      value: c.close,
+    }));
+
+    const oracleData = priceData
+      .map(c => {
+        const hourKey = Math.floor(c.time / 3_600_000) * 3_600_000;
+        const premium = premiumByHour.get(hourKey);
+        if (premium === undefined) return null;
+        return { time: toTime(c.time), value: c.close / (1 + premium) };
+      })
+      .filter((d): d is { time: UTCTimestamp; value: number } => d !== null);
+
+    // Append live samples (only those after the last historical candle)
+    const lastHistTime = tradeData[tradeData.length - 1].time;
+    for (const sample of premiumPoller.samples) {
+      const t = toTime(sample.time);
+      if (t > lastHistTime) {
+        tradeData.push({ time: t, value: sample.markPx });
+        oracleData.push({ time: t, value: sample.oraclePx });
+      }
+    }
+
+    tradeSeriesRef.current.setData(tradeData);
+    oracleSeriesRef.current.setData(oracleData);
+  }, [premiumPoller.samples, priceData, premiumByHour]);
+
+  // Keep current-prices cards in sync with latest poller sample
+  useEffect(() => {
+    if (premiumPoller.samples.length === 0) return;
+    const latest = premiumPoller.samples[premiumPoller.samples.length - 1];
+    setCurrentPrices({
+      markPx: latest.markPx,
+      oraclePx: latest.oraclePx,
+      premium: latest.premium,
+    });
+  }, [premiumPoller.samples]);
 
   // Compute stats
   const stats = computeStats(fundingData);
@@ -381,6 +435,15 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         <div className="flex items-center gap-4 flex-wrap mb-2">
           {priceData.length > 0 && (
             <div className="flex items-center gap-3 text-xs">
+              {premiumPoller.samples.length > 0 && (
+                <span className="flex items-center gap-1.5 text-green-400">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                  </span>
+                  <span className="text-[10px] font-semibold uppercase tracking-wider">Live</span>
+                </span>
+              )}
               <span className="flex items-center gap-1.5">
                 <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
                 <span className="text-gray-400">Trade</span>
