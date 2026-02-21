@@ -185,52 +185,58 @@ export interface AssetContext {
  */
 export async function fetchAssetContext(coin: string): Promise<AssetContext | null> {
   const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
-  const tokenPart = coin.includes(':') ? coin.split(':')[1] : null;
-  const namesToTry = tokenPart ? [searchName, tokenPart] : [searchName];
+  const isHip3 = coin.includes(':');
 
+  // perpsMetaAndAssetCtxs returns ALL perp dexes (main + HIP-3 builder-deployed like vntl)
+  // metaAndAssetCtxs only returns the main perp exchange
   const response = await fetch('https://api.hyperliquid.xyz/info', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ type: 'metaAndAssetCtxs' }),
+    body: JSON.stringify({ type: 'perpsMetaAndAssetCtxs' }),
   });
 
   const data = await response.json();
 
-  // Response could be [meta, [ctxs]] (2 elements) or [meta0, [ctxs0], meta1, [ctxs1]] (4 elements)
-  // Exchange 0 = regular perps, Exchange 1 = pre-launch/vntl tokens
-  console.log(`[fetchAssetContext] Looking for "${coin}" (try: ${namesToTry.join(', ')}). Response has ${Array.isArray(data) ? data.length : 'non-array'} elements.`);
+  // Response is array of [meta, [ctxs]] pairs — one pair per perp dex
+  // Each entry: { universe: [{name, ...}], ... } paired with [{markPx, oraclePx, ...}]
+  if (!Array.isArray(data)) {
+    console.log(`[fetchAssetContext] Unexpected response type: ${typeof data}`);
+    return null;
+  }
 
-  // Check each pair of [meta, ctxs] in the response
-  for (let exIdx = 0; exIdx * 2 + 1 < data.length; exIdx++) {
-    const metaIdx = exIdx * 2;
-    const ctxIdx = metaIdx + 1;
-    const universe: { name: string }[] = data[metaIdx]?.universe ?? [];
-    const ctxs: Record<string, string>[] = data[ctxIdx] ?? [];
+  console.log(`[fetchAssetContext] Looking for "${searchName}" (hip3=${isHip3}). Response has ${data.length} dex entries.`);
 
-    for (const name of namesToTry) {
-      for (let i = 0; i < universe.length; i++) {
-        if (universe[i].name === name) {
-          console.log(`[fetchAssetContext] ✓ Matched "${coin}" → "${universe[i].name}" (exchange ${exIdx}, index ${i})`);
-          const ctx = ctxs[i];
-          return {
-            coin: universe[i].name,
-            markPx: ctx.markPx ?? '0',
-            oraclePx: ctx.oraclePx ?? '0',
-            premium: ctx.premium ?? '0',
-            funding: ctx.funding ?? '0',
-            openInterest: ctx.openInterest ?? '0',
-          };
-        }
+  for (let dexIdx = 0; dexIdx < data.length; dexIdx++) {
+    const entry = data[dexIdx];
+    const universe: { name: string }[] = entry?.universe ?? entry?.[0]?.universe ?? [];
+    const ctxs: Record<string, string>[] = entry?.assetCtxs ?? entry?.[1] ?? [];
+
+    if (universe.length === 0) continue;
+
+    for (let i = 0; i < universe.length; i++) {
+      if (universe[i].name === searchName) {
+        console.log(`[fetchAssetContext] ✓ Found "${searchName}" in dex ${dexIdx}, index ${i}`);
+        const ctx = ctxs[i];
+        return {
+          coin: universe[i].name,
+          markPx: ctx.markPx ?? '0',
+          oraclePx: ctx.oraclePx ?? '0',
+          premium: ctx.premium ?? '0',
+          funding: ctx.funding ?? '0',
+          openInterest: ctx.openInterest ?? '0',
+        };
       }
     }
-
-    // Log what's in this exchange for debugging
-    const similar = tokenPart
-      ? universe.filter(u => u.name.toUpperCase().includes(tokenPart.toUpperCase())).map(u => u.name)
-      : [];
-    const sample = universe.slice(-5).map(u => u.name);
-    console.log(`[fetchAssetContext] Exchange ${exIdx}: ${universe.length} assets, no match. Similar: [${similar.join(', ')}]. Last 5: [${sample.join(', ')}]`);
   }
+
+  // Debug: log what names exist across all dexes
+  const allNames: string[] = [];
+  for (const entry of data) {
+    const universe: { name: string }[] = entry?.universe ?? entry?.[0]?.universe ?? [];
+    allNames.push(...universe.map(u => u.name));
+  }
+  const similar = allNames.filter(n => n.toLowerCase().includes(searchName.toLowerCase().split(':').pop() ?? ''));
+  console.log(`[fetchAssetContext] "${searchName}" not found in ${allNames.length} total assets across ${data.length} dexes. Similar: [${similar.slice(0, 10).join(', ')}]`);
 
   return null;
 }
