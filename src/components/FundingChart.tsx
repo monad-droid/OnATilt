@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState, useCallback } from 'react';
+import { useEffect, useRef, useState, useCallback, useMemo } from 'react';
 import {
   createChart,
   HistogramSeries,
@@ -166,7 +166,18 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
     };
   }, [fundingData, height]);
 
-  // Render oracle price chart when price data changes
+  // Build premium map from funding data (keyed by hourly timestamp)
+  const premiumMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (const f of fundingData) {
+      // Round to nearest hour boundary for matching
+      const hourKey = Math.round(f.time / 3_600_000) * 3_600_000;
+      map.set(hourKey, parseFloat(f.premium));
+    }
+    return map;
+  }, [fundingData]);
+
+  // Render oracle + mark price chart when data changes
   useEffect(() => {
     if (!priceChartContainerRef.current || priceData.length === 0) return;
 
@@ -203,9 +214,11 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
 
     priceChartRef.current = chart;
 
-    const lineSeries = chart.addSeries(LineSeries, {
+    // Oracle price line (purple)
+    const oracleSeries = chart.addSeries(LineSeries, {
       color: '#8b5cf6',
       lineWidth: 2,
+      title: 'Oracle',
       priceFormat: {
         type: 'price',
         precision: 4,
@@ -213,12 +226,37 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       },
     });
 
-    const lineData = priceData.map(c => ({
+    // Mark price line (cyan)
+    const markSeries = chart.addSeries(LineSeries, {
+      color: '#06b6d4',
+      lineWidth: 2,
+      title: 'Mark',
+      priceFormat: {
+        type: 'price',
+        precision: 4,
+        minMove: 0.0001,
+      },
+    });
+
+    const oracleLineData = priceData.map(c => ({
       time: toTime(c.time),
       value: c.close,
     }));
 
-    lineSeries.setData(lineData);
+    const markLineData = priceData
+      .map(c => {
+        const hourKey = Math.round(c.time / 3_600_000) * 3_600_000;
+        const premium = premiumMap.get(hourKey);
+        if (premium === undefined) return null;
+        return {
+          time: toTime(c.time),
+          value: c.close * (1 + premium),
+        };
+      })
+      .filter((d): d is { time: UTCTimestamp; value: number } => d !== null);
+
+    oracleSeries.setData(oracleLineData);
+    markSeries.setData(markLineData);
     chart.timeScale().fitContent();
 
     const handleResize = () => {
@@ -239,7 +277,7 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
         priceChartRef.current = null;
       }
     };
-  }, [priceData]);
+  }, [priceData, premiumMap]);
 
   // Compute stats
   const stats = computeStats(fundingData);
@@ -299,10 +337,47 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
       {/* Funding Rate Chart */}
       <div ref={chartContainerRef} />
 
-      {/* Oracle Price Chart */}
+      {/* Oracle vs Mark Price Chart */}
       {priceData.length > 0 && (
         <div className="mt-4">
-          <h4 className="text-white text-sm font-medium mb-2">Oracle Price</h4>
+          <div className="flex items-center justify-between mb-2">
+            <div className="flex items-center gap-4">
+              <h4 className="text-white text-sm font-medium">Oracle vs Mark Price</h4>
+              <div className="flex items-center gap-3 text-xs">
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 bg-[#8b5cf6] rounded" />
+                  <span className="text-gray-400">Oracle</span>
+                </span>
+                <span className="flex items-center gap-1.5">
+                  <span className="inline-block w-3 h-0.5 bg-[#06b6d4] rounded" />
+                  <span className="text-gray-400">Mark</span>
+                </span>
+              </div>
+            </div>
+            {(() => {
+              const latestCandle = priceData[priceData.length - 1];
+              if (!latestCandle) return null;
+              const hourKey = Math.round(latestCandle.time / 3_600_000) * 3_600_000;
+              const premium = premiumMap.get(hourKey);
+              if (premium === undefined) return null;
+              const oracle = latestCandle.close;
+              const mark = oracle * (1 + premium);
+              const diff = ((mark - oracle) / oracle) * 100;
+              return (
+                <div className="flex items-center gap-3 text-xs">
+                  <span className="text-gray-400">
+                    Oracle: <span className="text-[#8b5cf6] font-medium">${oracle.toFixed(4)}</span>
+                  </span>
+                  <span className="text-gray-400">
+                    Mark: <span className="text-[#06b6d4] font-medium">${mark.toFixed(4)}</span>
+                  </span>
+                  <span className={`font-medium ${diff >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {diff >= 0 ? '+' : ''}{diff.toFixed(4)}%
+                  </span>
+                </div>
+              );
+            })()}
+          </div>
           <div ref={priceChartContainerRef} />
         </div>
       )}
