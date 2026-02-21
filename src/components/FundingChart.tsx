@@ -13,13 +13,14 @@ interface FundingChartProps {
   height?: number;
 }
 
-type RangeOption = '7d' | '14d' | '30d' | '90d';
+type RangeOption = '7d' | '14d' | '30d' | '90d' | 'max';
 
 const RANGE_OPTIONS: { label: string; value: RangeOption; days: number }[] = [
   { label: '7D', value: '7d', days: 7 },
   { label: '14D', value: '14d', days: 14 },
   { label: '30D', value: '30d', days: 30 },
   { label: '90D', value: '90d', days: 90 },
+  { label: 'MAX', value: 'max', days: 365 },
 ];
 
 function toTime(ms: number): UTCTimestamp {
