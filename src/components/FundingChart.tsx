@@ -8,6 +8,8 @@ import {
 } from 'lightweight-charts';
 import type { IChartApi, UTCTimestamp } from 'lightweight-charts';
 import type { FundingRate, Candle } from '@/types';
+import { usePremiumPoller } from '@/hooks/usePremiumPoller';
+import IntraHourChart from './IntraHourChart';
 
 interface FundingChartProps {
   height?: number;
@@ -41,6 +43,18 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   const [crosshairPrices, setCrosshairPrices] = useState<{ trade: number; oracle: number; diff: number } | null>(null);
   const [crosshairFundingRate, setCrosshairFundingRate] = useState<number | null>(null);
   const [predictedFunding, setPredictedFunding] = useState<{ rate: number; nextTime: number; estimated: boolean } | null>(null);
+
+  // Normalized coin for polling (matches format sent to API)
+  const normalizedCoin = useMemo(() => {
+    const raw = coin.trim();
+    if (!raw) return null;
+    return raw.includes(':')
+      ? raw.split(':')[0].toLowerCase() + ':' + raw.split(':')[1].toUpperCase()
+      : raw.toUpperCase();
+  }, [coin]);
+
+  // Poll premium every 30s for intra-hour chart
+  const premiumPoller = usePremiumPoller(fundingData.length > 0 ? normalizedCoin : null);
 
   const fetchFunding = useCallback(async (overrideCoin?: string, overrideRange?: RangeOption) => {
     const raw = overrideCoin ?? coin;
@@ -447,6 +461,17 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
               <div className="text-gray-500 text-sm">unavailable</div>
             )}
           </div>
+        </div>
+      )}
+
+      {/* Intra-hour premium chart */}
+      {premiumPoller.active && (
+        <div className="mt-4">
+          <IntraHourChart
+            samples={premiumPoller.samples}
+            runningAvg={premiumPoller.runningAvg}
+            hourStart={premiumPoller.hourStart}
+          />
         </div>
       )}
 
