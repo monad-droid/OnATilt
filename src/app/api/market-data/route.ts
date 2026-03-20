@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { fetchCandles, fetchAllMids, fetchAssets, fetchOrderbook } from '@/lib/hyperliquid';
+import { fetchCandles, fetchAllMids, fetchAssets, fetchOrderbook, fetchAssetContext, fetchPredictedFunding, estimateVntlPredictedFunding } from '@/lib/hyperliquid';
 import type { Timeframe } from '@/types';
 
 export async function POST(request: NextRequest) {
@@ -34,6 +34,34 @@ export async function POST(request: NextRequest) {
         }
         const orderbook = await fetchOrderbook(coin);
         return NextResponse.json({ orderbook });
+      }
+
+      case 'asset-context': {
+        const { coin } = body;
+        if (!coin) {
+          return NextResponse.json({ error: 'coin required' }, { status: 400 });
+        }
+        console.log(`[asset-context] Fetching for coin: "${coin}"`);
+        const context = await fetchAssetContext(coin);
+        if (context) {
+          console.log(`[asset-context] ${coin} → premium=${context.premium}, mark=${context.markPx}, oracle=${context.oraclePx}`);
+        } else {
+          console.log(`[asset-context] ${coin} → context is NULL (coin not found in universe)`);
+        }
+        return NextResponse.json({ context });
+      }
+
+      case 'predicted-funding': {
+        const { coin } = body;
+        if (!coin) {
+          return NextResponse.json({ error: 'coin required' }, { status: 400 });
+        }
+        // vntl: tokens use the Ventuals formula; others use HL's predictedFundings
+        const isVntl = typeof coin === 'string' && coin.toLowerCase().startsWith('vntl:');
+        const predicted = isVntl
+          ? await estimateVntlPredictedFunding(coin)
+          : await fetchPredictedFunding(coin);
+        return NextResponse.json({ predicted, estimated: isVntl });
       }
 
       default:

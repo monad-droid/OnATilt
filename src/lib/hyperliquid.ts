@@ -1,5 +1,5 @@
 import { Hyperliquid } from 'hyperliquid';
-import type { Candle, Timeframe, TradeRequest } from '@/types';
+import type { Candle, Timeframe, TradeRequest, FundingRate } from '@/types';
 
 // Re-export config type locally since ours differs from SDK's
 export interface HLConfig {
@@ -170,6 +170,64 @@ export async function fetchAllMids(): Promise<Record<string, string>> {
   return response.json();
 }
 
+export interface AssetContext {
+  coin: string;
+  markPx: string;
+  oraclePx: string;
+  premium: string;
+  funding: string;
+  openInterest: string;
+}
+
+/**
+ * Fetch current oracle and mark prices for a specific coin from metaAndAssetCtxs.
+ * Returns real API values — not derived.
+ */
+export async function fetchAssetContext(coin: string): Promise<AssetContext | null> {
+  const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
+  // HIP-3 coins like "vntl:OPENAI" need dex="vntl" to query their builder-deployed exchange
+  const dex = coin.includes(':') ? coin.split(':')[0].toLowerCase() : '';
+
+  const response = await fetch('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'metaAndAssetCtxs', ...(dex ? { dex } : {}) }),
+  });
+
+  if (!response.ok) {
+    console.log(`[fetchAssetContext] metaAndAssetCtxs (dex=${dex || 'default'}) returned ${response.status}`);
+    return null;
+  }
+
+  const data = await response.json();
+  const universe: { name: string }[] = data[0]?.universe ?? [];
+  const ctxs: Record<string, string>[] = data[1] ?? [];
+
+  // HIP-3 dex universe keeps the full prefixed name (e.g. "vntl:OPENAI")
+  const coinName = searchName;
+
+  for (let i = 0; i < universe.length; i++) {
+    if (universe[i].name === coinName) {
+      console.log(`[fetchAssetContext] ✓ Found "${coin}" → "${universe[i].name}" (dex=${dex || 'default'}, index ${i})`);
+      const ctx = ctxs[i];
+      return {
+        coin: universe[i].name,
+        markPx: ctx.markPx ?? '0',
+        oraclePx: ctx.oraclePx ?? '0',
+        premium: ctx.premium ?? '0',
+        funding: ctx.funding ?? '0',
+        openInterest: ctx.openInterest ?? '0',
+      };
+    }
+  }
+
+  // Debug: log what's in this dex's universe
+  const sample = universe.slice(0, 10).map(u => u.name);
+  console.log(`[fetchAssetContext] "${coinName}" not found in ${universe.length} assets (dex=${dex || 'default'}). First 10: [${sample.join(', ')}]`);
+  return null;
+}
+
+
 export async function fetchOrderbook(coin: string) {
   const response = await fetch('https://api.hyperliquid.xyz/info', {
     method: 'POST',
@@ -198,6 +256,227 @@ export async function fetchOpenOrders(walletAddress: string) {
   });
 
   return response.json();
+}
+
+// ============================================================
+// Predicted Funding Rates
+// ============================================================
+
+export interface PredictedFunding {
+  fundingRate: string;
+  nextFundingTime: number; // ms epoch
+}
+
+/**
+ * Fetch predicted funding rate for a coin from the predictedFundings endpoint.
+ * Returns the Hyperliquid perp prediction, or null if not available.
+ * Note: Only available for first perp dex (BTC, ETH, etc.), NOT vntl: tokens.
+ */
+export async function fetchPredictedFunding(coin: string): Promise<PredictedFunding | null> {
+  const response = await fetch('https://api.hyperliquid.xyz/info', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'predictedFundings' }),
+  });
+
+  const data = await response.json();
+  if (!Array.isArray(data)) return null;
+
+  const searchName = coin.includes(':') ? coin : coin.replace('-PERP', '');
+
+  for (const entry of data) {
+    if (!Array.isArray(entry) || entry.length < 2) continue;
+    const [name, venues] = entry;
+    if (name !== searchName) continue;
+
+    // Find Hyperliquid perp venue
+    for (const v of venues) {
+      if (v?.venue === 'HlPerp' && v.fundingRate && v.nextFundingTime) {
+        return {
+          fundingRate: v.fundingRate,
+          nextFundingTime: v.nextFundingTime,
+        };
+      }
+    }
+  }
+
+  return null;
+}
+
+// ============================================================
+// Ventuals Pre-IPO Predicted Funding
+// ============================================================
+//
+// Ventuals applies a dynamic multiplier to Hyperliquid's funding formula
+// based on the mark-to-oracle deviation. The multiplier schedule:
+//   <5%  deviation → targets ~15% annualized (~0.00171%/hr)
+//   5-19% deviation → exponential curve
+//   ≥19% deviation → targets 4.0%/hr max
+//
+// Lookup table from Ventuals docs (mark-to-oracle deviation → hourly FR).
+
+const VENTUALS_FR_TABLE: [number, number][] = [
+  [0.00, 0.0000171],
+  [0.01, 0.0000171],
+  [0.02, 0.0000171],
+  [0.03, 0.0000171],
+  [0.04, 0.0000171],
+  [0.05, 0.0000186],
+  [0.06, 0.0000223],
+  [0.07, 0.0000261],
+  [0.08, 0.0000298],
+  [0.09, 0.0000336],
+  [0.10, 0.0000373],
+  [0.11, 0.0000411],
+  [0.12, 0.0000448],
+  [0.13, 0.0000487],
+  [0.14, 0.0000531],
+  [0.15, 0.0000594],
+  [0.16, 0.0000737],
+  [0.17, 0.0001284],
+  [0.18, 0.0006107],
+  [0.19, 0.0400000],
+  [0.20, 0.0400000],
+];
+
+/**
+ * Estimate the Ventuals pre-IPO hourly funding rate from the current
+ * mark-to-oracle deviation. Uses linear interpolation on the published
+ * Ventuals funding schedule.
+ *
+ * @param markPx  Current mark price
+ * @param oraclePx  Current oracle price
+ * @returns Signed hourly funding rate as a decimal (e.g. 0.0000373 = 0.00373%)
+ */
+export function estimateVentualsFundingRate(markPx: number, oraclePx: number): number {
+  if (oraclePx <= 0) return 0;
+
+  const deviation = (markPx - oraclePx) / oraclePx; // signed
+  const absDeviation = Math.abs(deviation);
+  const sign = deviation >= 0 ? 1 : -1;
+
+  // Clamp to table range
+  if (absDeviation >= 0.19) return sign * 0.04;
+  if (absDeviation <= 0) return 0;
+
+  // Linear interpolation between table points
+  const step = 0.01;
+  const idx = Math.min(Math.floor(absDeviation / step), VENTUALS_FR_TABLE.length - 2);
+  const lower = VENTUALS_FR_TABLE[idx];
+  const upper = VENTUALS_FR_TABLE[idx + 1];
+  const t = (absDeviation - lower[0]) / step;
+  const rate = lower[1] + t * (upper[1] - lower[1]);
+
+  return sign * rate;
+}
+
+/**
+ * For vntl: tokens, compute a predicted funding rate locally since the
+ * predictedFundings endpoint doesn't cover them.
+ * Returns the estimated rate + next settlement time (top of next hour).
+ */
+export async function estimateVntlPredictedFunding(coin: string): Promise<PredictedFunding | null> {
+  const ctx = await fetchAssetContext(coin);
+  if (!ctx) return null;
+
+  const markPx = parseFloat(ctx.markPx);
+  const oraclePx = parseFloat(ctx.oraclePx);
+  if (oraclePx <= 0) return null;
+
+  const rate = estimateVentualsFundingRate(markPx, oraclePx);
+
+  // Next settlement is the top of the next hour
+  const now = Date.now();
+  const nextHour = Math.ceil(now / 3_600_000) * 3_600_000;
+
+  return {
+    fundingRate: rate.toFixed(10),
+    nextFundingTime: nextHour,
+  };
+}
+
+// ============================================================
+// Funding Rate History
+// ============================================================
+
+/**
+ * Fetch historical funding rates for a coin.
+ * Hyperliquid returns max 500 hours per request, so we paginate.
+ * @param coin - Asset symbol (e.g. "BTC", "OPENAI")
+ * @param days - Number of days of history to fetch (default 30)
+ */
+export async function fetchFundingHistory(
+  coin: string,
+  days: number = 30
+): Promise<FundingRate[]> {
+  const now = Date.now();
+  const startTime = now - days * 86_400_000;
+  const maxHoursPerRequest = 500;
+  const msPerChunk = maxHoursPerRequest * 3_600_000;
+
+  const allRates: FundingRate[] = [];
+  let cursor = startTime;
+
+  while (cursor < now) {
+    const chunkEnd = Math.min(cursor + msPerChunk, now);
+
+    const maxRetries = 3;
+    for (let attempt = 0; attempt <= maxRetries; attempt++) {
+      const response = await fetch('https://api.hyperliquid.xyz/info', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          type: 'fundingHistory',
+          coin: coin.includes(':') ? coin : coin.replace('-PERP', ''),
+          startTime: cursor,
+          endTime: chunkEnd,
+        }),
+      });
+
+      if (response.status === 429) {
+        if (attempt < maxRetries) {
+          await sleep(1000 * Math.pow(2, attempt));
+          continue;
+        }
+        throw new Error(`Rate limited fetching funding for ${coin} after ${maxRetries} retries`);
+      }
+
+      const data = await response.json();
+
+      // Null response could be rate limit (retry) or no data for this chunk (skip)
+      if (data === null || data === undefined) {
+        if (attempt < maxRetries) {
+          await sleep(1000 * Math.pow(2, attempt));
+          continue;
+        }
+        // No data for this time range — skip instead of throwing
+        break;
+      }
+
+      if (!Array.isArray(data)) {
+        // Empty array-like or error object — skip this chunk
+        break;
+      }
+
+      allRates.push(...data);
+      break;
+    }
+
+    cursor = chunkEnd;
+
+    // Small delay between paginated requests to avoid rate limits
+    if (cursor < now) {
+      await sleep(200);
+    }
+  }
+
+  // Deduplicate by timestamp (overlapping boundaries)
+  const seen = new Set<number>();
+  return allRates.filter(r => {
+    if (seen.has(r.time)) return false;
+    seen.add(r.time);
+    return true;
+  }).sort((a, b) => a.time - b.time);
 }
 
 // ============================================================

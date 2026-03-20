@@ -222,3 +222,12 @@ export interface TradeResult {
   blockReason?: string;
 }
 
+// --- Funding Rate ---
+
+export interface FundingRate {
+  coin: string;
+  fundingRate: string;   // raw string from API (e.g. "0.0001")
+  premium: string;
+  time: number;          // Unix timestamp in ms
+}
+
