@@ -380,6 +380,41 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
   // Compute stats
   const stats = computeStats(fundingData);
 
+  // Cumulative funding calculator state
+  const [cumStartDate, setCumStartDate] = useState('');
+  const [cumEndDate, setCumEndDate] = useState('');
+
+  // Auto-set date range when funding data loads
+  useEffect(() => {
+    if (fundingData.length > 0) {
+      const first = new Date(fundingData[0].time).toISOString().split('T')[0];
+      const last = new Date(fundingData[fundingData.length - 1].time).toISOString().split('T')[0];
+      setCumStartDate(first);
+      setCumEndDate(last);
+    }
+  }, [fundingData]);
+
+  const cumulativeCalc = useMemo(() => {
+    if (!cumStartDate || !cumEndDate || fundingData.length === 0) return null;
+
+    const startMs = new Date(cumStartDate).getTime();
+    const endMs = new Date(cumEndDate).getTime() + 86_400_000; // include end date fully
+
+    const filtered = fundingData.filter(d => d.time >= startMs && d.time < endMs);
+    if (filtered.length === 0) return null;
+
+    const rates = filtered.map(d => parseFloat(d.fundingRate) * 100);
+    const cumulative = rates.reduce((s, r) => s + r, 0);
+    const avgRate = cumulative / rates.length;
+    const annualized = avgRate * 8760;
+    const hours = rates.length;
+    const days = Math.max(1, Math.round((filtered[filtered.length - 1].time - filtered[0].time) / 86_400_000));
+    const positiveHours = rates.filter(r => r >= 0).length;
+    const negativeHours = rates.filter(r => r < 0).length;
+
+    return { cumulative, avgRate, annualized, hours, days, positiveHours, negativeHours };
+  }, [fundingData, cumStartDate, cumEndDate]);
+
   return (
     <div className="border border-gray-800 rounded-xl p-4" style={{ minHeight: height }}>
       {/* Controls */}
@@ -602,6 +637,101 @@ export default function FundingChart({ height = 600 }: FundingChartProps) {
             sub="projected APR"
             color={stats.annualized >= 0 ? 'green' : 'red'}
           />
+        </div>
+      )}
+
+      {/* Cumulative Funding Calculator */}
+      {fundingData.length > 0 && (
+        <div className="mt-4 border border-gray-800 rounded-lg p-4">
+          <h4 className="text-white text-sm font-medium mb-3">Cumulative Funding Calculator</h4>
+          <div className="flex items-end gap-3 flex-wrap mb-4">
+            <div>
+              <label className="block text-gray-400 text-xs mb-1">Start Date</label>
+              <input
+                type="date"
+                value={cumStartDate}
+                onChange={(e) => setCumStartDate(e.target.value)}
+                className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500 [color-scheme:dark]"
+              />
+            </div>
+            <div>
+              <label className="block text-gray-400 text-xs mb-1">End Date</label>
+              <input
+                type="date"
+                value={cumEndDate}
+                onChange={(e) => setCumEndDate(e.target.value)}
+                className="bg-gray-900 border border-gray-700 rounded-lg px-3 py-1.5 text-white text-sm focus:outline-none focus:border-blue-500 [color-scheme:dark]"
+              />
+            </div>
+            <div className="flex gap-1">
+              {[
+                { label: '7D', days: 7 },
+                { label: '14D', days: 14 },
+                { label: '30D', days: 30 },
+              ].map(({ label, days }) => (
+                <button
+                  key={label}
+                  onClick={() => {
+                    const end = new Date(fundingData[fundingData.length - 1].time);
+                    const start = new Date(end.getTime() - days * 86_400_000);
+                    setCumStartDate(start.toISOString().split('T')[0]);
+                    setCumEndDate(end.toISOString().split('T')[0]);
+                  }}
+                  className="px-2.5 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-white hover:bg-gray-800 bg-gray-900 border border-gray-700 transition-colors"
+                >
+                  {label}
+                </button>
+              ))}
+              <button
+                onClick={() => {
+                  if (fundingData.length > 0) {
+                    setCumStartDate(new Date(fundingData[0].time).toISOString().split('T')[0]);
+                    setCumEndDate(new Date(fundingData[fundingData.length - 1].time).toISOString().split('T')[0]);
+                  }
+                }}
+                className="px-2.5 py-1.5 rounded text-xs font-medium text-gray-400 hover:text-white hover:bg-gray-800 bg-gray-900 border border-gray-700 transition-colors"
+              >
+                All
+              </button>
+            </div>
+          </div>
+
+          {cumulativeCalc ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+                <div className="text-gray-400 text-xs mb-1">Cumulative Funding</div>
+                <div className={`text-lg font-semibold ${cumulativeCalc.cumulative >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {cumulativeCalc.cumulative >= 0 ? '+' : ''}{cumulativeCalc.cumulative.toFixed(4)}%
+                </div>
+                <div className="text-gray-500 text-xs mt-0.5">{cumulativeCalc.days}d · {cumulativeCalc.hours} hours</div>
+              </div>
+              <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+                <div className="text-gray-400 text-xs mb-1">Avg Rate / Hour</div>
+                <div className={`text-lg font-semibold ${cumulativeCalc.avgRate >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {cumulativeCalc.avgRate >= 0 ? '+' : ''}{cumulativeCalc.avgRate.toFixed(4)}%
+                </div>
+                <div className="text-gray-500 text-xs mt-0.5">over selected range</div>
+              </div>
+              <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+                <div className="text-gray-400 text-xs mb-1">Annualized</div>
+                <div className={`text-lg font-semibold ${cumulativeCalc.annualized >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {cumulativeCalc.annualized >= 0 ? '+' : ''}{cumulativeCalc.annualized.toFixed(2)}%
+                </div>
+                <div className="text-gray-500 text-xs mt-0.5">projected APR</div>
+              </div>
+              <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-3">
+                <div className="text-gray-400 text-xs mb-1">Direction Split</div>
+                <div className="text-sm font-semibold">
+                  <span className="text-green-400">{cumulativeCalc.positiveHours}</span>
+                  <span className="text-gray-500"> / </span>
+                  <span className="text-red-400">{cumulativeCalc.negativeHours}</span>
+                </div>
+                <div className="text-gray-500 text-xs mt-0.5">positive / negative hours</div>
+              </div>
+            </div>
+          ) : (
+            <div className="text-gray-500 text-sm">No funding data in selected range</div>
+          )}
         </div>
       )}
 
